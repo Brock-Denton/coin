@@ -22,32 +22,46 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
   const params = await searchParams
   const supabase = await createClient()
   
-  let query = supabase
-    .from('products')
-    .select(`
-      *,
-      product_images(image_url, is_primary)
-    `)
-    .eq('status', 'published')
+  try {
+    let query = supabase
+      .from('products')
+      .select(`
+        *,
+        product_images(image_url, is_primary)
+      `)
+      .eq('status', 'published')
+    
+    // Apply filters
+    if (params.denomination) {
+      query = query.eq('intake_id', params.denomination) // This would need a join to attributions in real implementation
+    }
+    
+    if (params.price_min) {
+      const priceMin = parseInt(params.price_min)
+      if (!isNaN(priceMin)) {
+        query = query.gte('price_cents', priceMin * 100)
+      }
+    }
+    
+    if (params.price_max) {
+      const priceMax = parseInt(params.price_max)
+      if (!isNaN(priceMax)) {
+        query = query.lte('price_cents', priceMax * 100)
+      }
+    }
+    
+    const { data: products, error } = await query.order('created_at', { ascending: false })
+    
+    if (error) {
+      console.error('Error fetching products:', error)
+      return (
+        <p className="text-muted-foreground col-span-full">Error loading products. Please try again later.</p>
+      )
+    }
   
-  // Apply filters
-  if (params.denomination) {
-    query = query.eq('intake_id', params.denomination) // This would need a join to attributions in real implementation
-  }
-  
-  if (params.price_min) {
-    query = query.gte('price_cents', parseInt(params.price_min) * 100)
-  }
-  
-  if (params.price_max) {
-    query = query.lte('price_cents', parseInt(params.price_max) * 100)
-  }
-  
-  const { data: products } = await query.order('created_at', { ascending: false })
-  
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {products && products.length > 0 ? (
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {products && products.length > 0 ? (
         products.map((product: any) => {
           const primaryImage = product.product_images?.find((img: any) => img.is_primary) || product.product_images?.[0]
           return (
@@ -75,11 +89,17 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
             </Card>
           )
         })
-      ) : (
-        <p className="text-muted-foreground col-span-full">No products match your filters.</p>
-      )}
-    </div>
-  )
+        ) : (
+          <p className="text-muted-foreground col-span-full">No products match your filters.</p>
+        )}
+      </div>
+    )
+  } catch (error) {
+    console.error('Error in BrowseResults:', error)
+    return (
+      <p className="text-muted-foreground col-span-full">Error loading products. Please try again later.</p>
+    )
+  }
 }
 
 export default async function BrowsePage(props: BrowsePageProps) {

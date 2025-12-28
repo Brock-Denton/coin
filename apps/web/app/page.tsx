@@ -8,15 +8,26 @@ export default async function HomePage() {
   const supabase = await createClient()
   
   // Get latest published products
-  const { data: products } = await supabase
-    .from('products')
-    .select(`
-      *,
-      product_images(image_url, is_primary)
-    `)
-    .eq('status', 'published')
-    .order('created_at', { ascending: false })
-    .limit(12)
+  let products = []
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select(`
+        *,
+        product_images(image_url, is_primary)
+      `)
+      .eq('status', 'published')
+      .order('created_at', { ascending: false })
+      .limit(12)
+    
+    if (error) {
+      console.error('Error fetching products:', error)
+    } else {
+      products = data || []
+    }
+  } catch (error) {
+    console.error('Error in HomePage:', error)
+  }
 
   return (
     <div className="min-h-screen">

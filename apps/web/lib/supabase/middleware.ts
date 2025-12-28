@@ -35,29 +35,30 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
+  // Auth temporarily disabled - can be re-enabled later
   // Protect admin routes
-  if (request.nextUrl.pathname.startsWith('/admin')) {
-    if (!user) {
-      // Redirect to login if not authenticated
-      const url = request.nextUrl.clone()
-      url.pathname = '/admin/login'
-      return NextResponse.redirect(url)
-    }
+  // if (request.nextUrl.pathname.startsWith('/admin')) {
+  //   if (!user) {
+  //     // Redirect to login if not authenticated
+  //     const url = request.nextUrl.clone()
+  //     url.pathname = '/admin/login'
+  //     return NextResponse.redirect(url)
+  //   }
 
-    // Check if user has admin/staff role
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
+  //   // Check if user has admin/staff role
+  //   const { data: profile } = await supabase
+  //     .from('profiles')
+  //     .select('role')
+  //     .eq('id', user.id)
+  //     .single()
 
-    if (!profile || !['admin', 'staff'].includes(profile.role)) {
-      // Redirect to home if not authorized
-      const url = request.nextUrl.clone()
-      url.pathname = '/'
-      return NextResponse.redirect(url)
-    }
-  }
+  //   if (!profile || !['admin', 'staff'].includes(profile.role)) {
+  //     // Redirect to home if not authorized
+  //     const url = request.nextUrl.clone()
+  //     url.pathname = '/'
+  //     return NextResponse.redirect(url)
+  //   }
+  // }
 
   // IMPORTANT: You *must* return the supabaseResponse object as it is. If you're
   // creating a new response object with NextResponse.next() make sure to:

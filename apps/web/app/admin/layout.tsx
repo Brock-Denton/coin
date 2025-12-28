@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+// import { redirect } from 'next/navigation'
+// import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 
@@ -8,22 +8,23 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // Auth temporarily disabled - can be re-enabled later
+  // const supabase = await createClient()
+  // const { data: { user } } = await supabase.auth.getUser()
   
-  if (!user) {
-    redirect('/admin/login')
-  }
+  // if (!user) {
+  //   redirect('/admin/login')
+  // }
   
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
+  // const { data: profile } = await supabase
+  //   .from('profiles')
+  //   .select('role')
+  //   .eq('id', user.id)
+  //   .single()
   
-  if (!profile || !['admin', 'staff'].includes(profile.role)) {
-    redirect('/')
-  }
+  // if (!profile || !['admin', 'staff'].includes(profile.role)) {
+  //   redirect('/')
+  // }
   
   return (
     <div className="min-h-screen">
