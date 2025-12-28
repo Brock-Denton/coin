@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  worker:
+    build:
+      context: ../services/worker
+      dockerfile: Dockerfile
+    container_name: coin_worker
+    restart: unless-stopped
+    env_file:
+      - ../services/worker/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Optional: mount logs or cache if needed
+      - worker_data:/app/data
+    networks:
+      - coin_network
+
+  # Optional: Selenium container (disabled by default)
+  # Uncomment if you need Selenium-based collectors
+  # selenium:
+  #   image: selenium/standalone-chrome:latest
+  #   container_name: coin_selenium
+  #   restart: unless-stopped
+  #   shm_size: 2gb
+  #   networks:
+  #     - coin_network
+  #   ports:
+  #     - "4444:4444"
+
+networks:
+  coin_network:
+    driver: bridge
+
+volumes:
+  worker_data:
+
+

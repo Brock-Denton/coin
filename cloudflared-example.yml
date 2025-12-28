@@ -1,0 +1,15 @@
+# Cloudflare Tunnel Configuration Example
+# This is optional - only needed if you want to expose a local FastAPI endpoint
+# The core design uses Supabase job queue, so this is not required
+
+tunnel: your-tunnel-id
+credentials-file: /path/to/credentials.json
+
+ingress:
+  # Route to local FastAPI endpoint (if you add one)
+  - hostname: worker-api.yourdomain.com
+    service: http://localhost:8000
+  # Catch-all rule
+  - service: http_status:404
+
+
