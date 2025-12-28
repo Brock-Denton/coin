@@ -58,11 +58,13 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
         <p className="text-muted-foreground col-span-full">Error loading products. Please try again later.</p>
       )
     }
+    
+    const productList = products || []
   
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {products && products.length > 0 ? (
-        products.map((product: any) => {
+        {productList && productList.length > 0 ? (
+        productList.map((product: any) => {
           const primaryImage = product.product_images?.find((img: any) => img.is_primary) || product.product_images?.[0]
           return (
             <Card key={product.id} className="overflow-hidden">
