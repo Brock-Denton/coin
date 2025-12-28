@@ -1,0 +1,25 @@
+# Python Worker Requirements
+# Python 3.11+
+
+# Core dependencies
+supabase==2.8.0
+python-dotenv==1.0.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# eBay API
+ebaysdk==2.2.0
+
+# Database
+psycopg2-binary==2.9.9
+
+# Utilities
+# httpx version managed by supabase
+tenacity==8.2.3
+
+# Logging
+structlog==24.1.0
+
+# Optional: Selenium (disabled by default)
+# selenium==4.15.2
+

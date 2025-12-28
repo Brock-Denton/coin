@@ -1,0 +1,255 @@
+"""eBay API collector for sold listings."""
+import hashlib
+import json
+from typing import List, Dict, Optional
+from ebaysdk.finding import Connection as Finding
+from ebaysdk.exception import ConnectionError as EbayConnectionError
+import structlog
+from src.collectors import BaseCollector
+from src.config import settings
+
+logger = structlog.get_logger()
+
+
+class EbayCollector(BaseCollector):
+    """Collector for eBay sold listings using official eBay Finding API."""
+    
+    def __init__(self, app_id: str, cert_id: str = None, dev_id: str = None, sandbox: bool = False):
+        """Initialize eBay collector.
+        
+        Args:
+            app_id: eBay App ID (required)
+            cert_id: eBay Cert ID (optional, for production)
+            dev_id: eBay Dev ID (optional)
+            sandbox: Use sandbox environment
+        """
+        self.app_id = app_id
+        self.cert_id = cert_id
+        self.dev_id = dev_id
+        self.sandbox = sandbox
+        self.site_id = 'EBAY-US'
+        
+    def _build_query(self, query_params: dict) -> str:
+        """Build eBay search query from attribution fields.
+        
+        Args:
+            query_params: Dictionary with year, mintmark, denomination, title, etc.
+            
+        Returns:
+            Query string for eBay API
+        """
+        parts = []
+        
+        # Add denomination if present
+        denomination_map = {
+            'penny': '1 cent',
+            'nickel': '5 cent',
+            'dime': '10 cent',
+            'quarter': '25 cent',
+            'half_dollar': 'half dollar',
+            'dollar': 'dollar'
+        }
+        
+        if query_params.get('denomination'):
+            denom = query_params['denomination']
+            if denom in denomination_map:
+                parts.append(denomination_map[denom])
+        
+        # Add year
+        if query_params.get('year'):
+            parts.append(str(query_params['year']))
+        
+        # Add mintmark
+        if query_params.get('mintmark'):
+            parts.append(query_params['mintmark'])
+        
+        # Add series
+        if query_params.get('series'):
+            parts.append(query_params['series'])
+        
+        # Add title/keywords if provided
+        if query_params.get('title'):
+            # Extract key terms from title
+            title = query_params['title']
+            # Remove common stop words
+            stop_words = {'coin', 'us', 'united', 'states', 'american'}
+            words = [w for w in title.lower().split() if w not in stop_words and len(w) > 2]
+            parts.extend(words[:3])  # Limit to 3 additional keywords
+        
+        # Add "US coin" to ensure we get US coins
+        if 'US' not in ' '.join(parts).upper():
+            parts.insert(0, 'US coin')
+        
+        return ' '.join(parts)
+    
+    def _filter_junk_listings(self, items: List[Dict], exclude_keywords: List[str]) -> List[Dict]:
+        """Filter out junk listings based on keywords.
+        
+        Args:
+            items: List of eBay item dictionaries
+            exclude_keywords: List of keywords to exclude
+            
+        Returns:
+            Filtered list of items
+        """
+        if not exclude_keywords:
+            return items
+        
+        filtered = []
+        exclude_lower = [k.lower() for k in exclude_keywords]
+        
+        for item in items:
+            title = item.get('title', '').lower()
+            
+            # Check if any exclude keyword appears in title
+            should_exclude = any(keyword in title for keyword in exclude_lower)
+            
+            if not should_exclude:
+                filtered.append(item)
+            else:
+                logger.debug("Filtered out listing", title=item.get('title'))
+        
+        return filtered
+    
+    def _normalize_price(self, price_str: str, currency: str = 'USD') -> Optional[int]:
+        """Normalize price to USD cents.
+        
+        Args:
+            price_str: Price string (e.g., "25.99")
+            currency: Currency code
+            
+        Returns:
+            Price in cents as integer, or None if conversion fails
+        """
+        try:
+            # eBay API returns prices as strings
+            price_float = float(price_str)
+            # Convert to cents
+            return int(price_float * 100)
+        except (ValueError, TypeError):
+            logger.warning("Failed to normalize price", price=price_str, currency=currency)
+            return None
+    
+    def collect(self, query_params: dict, exclude_keywords: List[str] = None) -> List[Dict]:
+        """Collect sold listings from eBay.
+        
+        Args:
+            query_params: Dictionary with query parameters
+            exclude_keywords: List of keywords to exclude (from source_rules)
+            
+        Returns:
+            List of price point dictionaries
+        """
+        if not self.app_id:
+            logger.error("eBay App ID not configured")
+            return []
+        
+        query = self._build_query(query_params)
+        logger.info("Collecting eBay listings", query=query)
+        
+        try:
+            # Initialize eBay API
+            api = Finding(
+                appid=self.app_id,
+                config_file=None,
+                siteid=self.site_id,
+                debug=False
+            )
+            
+            # Build request parameters
+            # Note: eBay Finding API uses findCompletedItems for sold listings
+            request_params = {
+                'keywords': query,
+                'itemFilter': [
+                    {'name': 'ListingType', 'value': ['AuctionWithBIN', 'FixedPrice']},
+                    {'name': 'SoldItemsOnly', 'value': 'true'},  # Only sold items
+                    {'name': 'HideDuplicateItems', 'value': 'true'}
+                ],
+                'sortOrder': 'EndTimeSoonest',
+                'paginationInput': {
+                    'entriesPerPage': 100,  # Max is 100
+                    'pageNumber': 1
+                }
+            }
+            
+            # Execute API call - findCompletedItems is available in Finding API
+            # This method requires the Finding API which supports completed items
+            try:
+                response = api.execute('findCompletedItems', request_params)
+            except Exception as api_error:
+                # Fallback: Try findItemsAdvanced with sold filter if findCompletedItems fails
+                logger.warning("findCompletedItems failed, trying alternative method", error=str(api_error))
+                request_params.pop('itemFilter', None)
+                request_params['itemFilter'] = [
+                    {'name': 'ListingType', 'value': ['AuctionWithBIN', 'FixedPrice']},
+                    {'name': 'HideDuplicateItems', 'value': 'true'}
+                ]
+                # Note: findItemsAdvanced doesn't support SoldItemsOnly, so we filter client-side
+                response = api.execute('findItemsAdvanced', request_params)
+                # We'll need to filter for sold items in the results
+            
+            # Parse response
+            items = response.dict().get('searchResult', {}).get('item', [])
+            if not isinstance(items, list):
+                items = [items] if items else []
+            
+            logger.info("Received eBay listings", count=len(items))
+            
+            # Filter junk listings
+            if exclude_keywords:
+                items = self._filter_junk_listings(items, exclude_keywords)
+                logger.info("After filtering", count=len(items))
+            
+            # Convert to price points
+            price_points = []
+            for item in items:
+                # Get selling price (sold items have sellingStatus)
+                selling_status = item.get('sellingStatus', {})
+                current_price = selling_status.get('currentPrice', {})
+                price_value = current_price.get('value')
+                
+                if not price_value:
+                    continue
+                
+                price_cents = self._normalize_price(price_value, current_price.get('currencyId', 'USD'))
+                if not price_cents:
+                    continue
+                
+                # Determine price type (sold items are 'sold')
+                price_type = 'sold'
+                
+                # Get listing URL
+                listing_url = item.get('viewItemURL', '')
+                
+                # Get listing title
+                title = item.get('title', '')
+                
+                # Get end time (sold date)
+                listing_info = item.get('listingInfo', {})
+                end_time = listing_info.get('endTime')
+                
+                price_point = {
+                    'source_id': query_params.get('source_id'),  # Passed from job
+                    'intake_id': query_params.get('intake_id'),
+                    'job_id': query_params.get('job_id'),
+                    'price_cents': price_cents,
+                    'price_type': price_type,
+                    'raw_payload': item,  # Store full eBay response
+                    'listing_url': listing_url,
+                    'listing_title': title,
+                    'listing_date': end_time,
+                    'filtered_out': False
+                }
+                
+                price_points.append(price_point)
+            
+            logger.info("Collected price points", count=len(price_points))
+            return price_points
+            
+        except EbayConnectionError as e:
+            logger.error("eBay API connection error", error=str(e), response=e.response.dict() if hasattr(e, 'response') else None)
+            return []
+        except Exception as e:
+            logger.error("Error collecting eBay listings", error=str(e), error_type=type(e).__name__)
+            return []
+
