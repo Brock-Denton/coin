@@ -5,7 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Copy, Check } from 'lucide-react'
+import { Copy, Check, Link2, DollarSign } from 'lucide-react'
+import { Label } from '@/components/ui/label'
 
 interface SearchQuery {
   id: string
@@ -13,6 +14,8 @@ interface SearchQuery {
   source: string
   url: string
   found?: boolean
+  resultUrl?: string
+  resultPrice?: string
 }
 
 interface SearchQueriesProps {
@@ -106,9 +109,17 @@ export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueries
     setTimeout(() => setCopiedId(null), 2000)
   }
 
-  const toggleFound = (queryId: string) => {
+  const toggleFound = (queryId: string, found: boolean) => {
     setQueries(queries.map(q => 
-      q.id === queryId ? { ...q, found: q.found === undefined ? true : !q.found } : q
+      q.id === queryId 
+        ? { ...q, found, resultUrl: found ? q.resultUrl : undefined, resultPrice: found ? q.resultPrice : undefined }
+        : q
+    ))
+  }
+
+  const updateResultData = (queryId: string, field: 'resultUrl' | 'resultPrice', value: string) => {
+    setQueries(queries.map(q => 
+      q.id === queryId ? { ...q, [field]: value } : q
     ))
   }
 
@@ -192,26 +203,83 @@ export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueries
                   <Button
                     variant={query.found === true ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => toggleFound(query.id)}
+                    onClick={() => toggleFound(query.id, true)}
                   >
                     {query.found === true ? '✓ Found' : 'Mark as Found'}
                   </Button>
                   <Button
                     variant={query.found === false ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => toggleFound(query.id)}
+                    onClick={() => toggleFound(query.id, false)}
                   >
                     {query.found === false ? '✗ Not Found' : 'Mark as Not Found'}
                   </Button>
                 </div>
+                {query.found === true && (
+                  <div className="pt-3 border-t space-y-3 bg-muted/30 p-3 rounded-lg">
+                    <div>
+                      <Label htmlFor={`url-${query.id}`} className="flex items-center gap-2 mb-2">
+                        <Link2 className="h-4 w-4" />
+                        Result URL
+                      </Label>
+                      <Input
+                        id={`url-${query.id}`}
+                        type="url"
+                        placeholder="https://example.com/coin-listing"
+                        value={query.resultUrl || ''}
+                        onChange={(e) => updateResultData(query.id, 'resultUrl', e.target.value)}
+                      />
+                      {query.resultUrl && (
+                        <a
+                          href={query.resultUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:underline mt-1 inline-block"
+                        >
+                          Open link
+                        </a>
+                      )}
+                    </div>
+                    <div>
+                      <Label htmlFor={`price-${query.id}`} className="flex items-center gap-2 mb-2">
+                        <DollarSign className="h-4 w-4" />
+                        Price (USD)
+                      </Label>
+                      <Input
+                        id={`price-${query.id}`}
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={query.resultPrice || ''}
+                        onChange={(e) => updateResultData(query.id, 'resultPrice', e.target.value)}
+                      />
+                      {query.resultPrice && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          ${parseFloat(query.resultPrice || '0').toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
             
             {allQueriesCompleted && (
               <div className="mt-4 p-4 bg-muted rounded-lg">
-                <p className="text-sm">
+                <p className="text-sm font-medium mb-2">
                   Completed: {foundCount} of {queries.length} searches found results.
                 </p>
+                {foundCount > 0 && (
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    {queries.filter(q => q.found === true && q.resultPrice).map(q => (
+                      <div key={q.id} className="flex justify-between">
+                        <span>{q.source}:</span>
+                        <span className="font-medium">${parseFloat(q.resultPrice || '0').toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </>
