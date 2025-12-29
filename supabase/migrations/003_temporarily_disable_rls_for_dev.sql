@@ -18,6 +18,7 @@ ALTER TABLE orders DISABLE ROW LEVEL SECURITY;
 ALTER TABLE order_items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs DISABLE ROW LEVEL SECURITY;
 
+-- Note: manual_search_results RLS is disabled in migration 004
 -- Note: profiles table should keep RLS enabled for security
 -- When you're ready to enable auth, you can re-enable RLS with:
 -- ALTER TABLE <table_name> ENABLE ROW LEVEL SECURITY;
