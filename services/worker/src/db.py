@@ -1,6 +1,7 @@
 """Database client and helpers."""
 from supabase import create_client, Client
 from src.config import settings
+from typing import Optional
 import structlog
 
 logger = structlog.get_logger()
@@ -9,8 +10,35 @@ logger = structlog.get_logger()
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
 
+def claim_next_job(worker_id: str, max_age_minutes: int = 30) -> Optional[dict]:
+    """Atomically claim the next pending or retryable job.
+    
+    Uses the database function for atomic job acquisition to prevent
+    double-processing by multiple workers.
+    
+    Args:
+        worker_id: Worker instance identifier
+        max_age_minutes: Maximum age in minutes for jobs to claim (default 30)
+        
+    Returns:
+        Job dictionary if claimed, None otherwise
+    """
+    try:
+        result = supabase.rpc('claim_next_pending_job', {
+            'worker_id': worker_id,
+            'max_age_minutes': max_age_minutes
+        }).execute()
+        
+        if result.data and len(result.data) > 0:
+            return result.data[0]
+        return None
+    except Exception as e:
+        logger.error("Failed to claim job", worker_id=worker_id, error=str(e))
+        return None
+
+
 def get_pending_jobs(limit: int = 10):
-    """Get pending scrape jobs from the queue."""
+    """Get pending scrape jobs from the queue. (Deprecated - use claim_next_job instead)"""
     try:
         result = supabase.table("scrape_jobs") \
             .select("*") \
@@ -25,7 +53,7 @@ def get_pending_jobs(limit: int = 10):
 
 
 def lock_job(job_id: str, worker_id: str) -> bool:
-    """Attempt to lock a job. Returns True if successfully locked."""
+    """Attempt to lock a job. Returns True if successfully locked. (Deprecated - use claim_next_job instead)"""
     try:
         result = supabase.table("scrape_jobs") \
             .update({
@@ -52,7 +80,16 @@ def update_job_status(job_id: str, status: str, error_message: str = None):
         "updated_at": "now()"
     }
     
-    if status in ("completed", "failed", "cancelled"):
+    # Map old status names to new ones for backwards compatibility
+    status_map = {
+        "completed": "succeeded",
+        "cancelled": "failed"
+    }
+    if status in status_map:
+        status = status_map[status]
+        update_data["status"] = status
+    
+    if status in ("succeeded", "failed"):
         update_data["completed_at"] = "now()"
     
     if error_message:
@@ -66,6 +103,23 @@ def update_job_status(job_id: str, status: str, error_message: str = None):
         logger.info("Updated job status", job_id=job_id, status=status)
     except Exception as e:
         logger.error("Failed to update job status", job_id=job_id, error=str(e))
+
+
+def mark_job_retryable(job_id: str, base_delay_minutes: int = 5):
+    """Mark a job as retryable with exponential backoff.
+    
+    Args:
+        job_id: Job ID to mark as retryable
+        base_delay_minutes: Base delay in minutes for exponential backoff (default 5)
+    """
+    try:
+        supabase.rpc('mark_job_retryable', {
+            'job_id': job_id,
+            'base_delay_minutes': base_delay_minutes
+        }).execute()
+        logger.info("Marked job as retryable", job_id=job_id)
+    except Exception as e:
+        logger.error("Failed to mark job as retryable", job_id=job_id, error=str(e))
 
 
 def log_job_event(job_id: str, level: str, message: str, metadata: dict = None):

@@ -82,6 +82,73 @@ class EbayCollector(BaseCollector):
         
         return ' '.join(parts)
     
+    def _compute_match_strength(self, listing_title: str, query_params: dict) -> float:
+        """Compute match strength (0.0 to 1.0) based on token overlap.
+        
+        Args:
+            listing_title: eBay listing title
+            query_params: Dictionary with year, mintmark, denomination, series, etc.
+            
+        Returns:
+            Match strength score from 0.0 to 1.0
+        """
+        title_lower = listing_title.lower()
+        matched_tokens = 0
+        total_tokens = 0
+        
+        # Extract tokens from query params
+        query_tokens = set()
+        
+        # Year token
+        if query_params.get('year'):
+            year_str = str(query_params['year'])
+            query_tokens.add(year_str)
+            total_tokens += 1
+            if year_str in title_lower:
+                matched_tokens += 1
+        
+        # Mintmark token (normalized)
+        if query_params.get('mintmark'):
+            mintmark = query_params['mintmark'].upper()
+            query_tokens.add(mintmark)
+            total_tokens += 1
+            if mintmark in title_lower.upper():
+                matched_tokens += 1
+        
+        # Denomination tokens
+        if query_params.get('denomination'):
+            denom = query_params['denomination']
+            denom_map = {
+                'penny': ['penny', 'cent', '1 cent'],
+                'nickel': ['nickel', '5 cent'],
+                'dime': ['dime', '10 cent'],
+                'quarter': ['quarter', '25 cent'],
+                'half_dollar': ['half dollar', 'half', '50 cent'],
+                'dollar': ['dollar', '1 dollar']
+            }
+            if denom in denom_map:
+                denom_tokens = denom_map[denom]
+                total_tokens += 1
+                if any(token in title_lower for token in denom_tokens):
+                    matched_tokens += 1
+        
+        # Series tokens (split into words)
+        if query_params.get('series'):
+            series = query_params['series'].lower()
+            series_words = series.split()
+            for word in series_words:
+                if len(word) > 3:  # Skip short words
+                    query_tokens.add(word)
+                    total_tokens += 1
+                    if word in title_lower:
+                        matched_tokens += 1
+        
+        # Calculate match strength
+        if total_tokens == 0:
+            return 0.5  # Default if no tokens to match
+        
+        return matched_tokens / total_tokens
+    
     def _filter_junk_listings(self, items: List[Dict], exclude_keywords: List[str]) -> List[Dict]:
         """Filter out junk listings based on keywords.
         
@@ -228,6 +295,9 @@ class EbayCollector(BaseCollector):
                 listing_info = item.get('listingInfo', {})
                 end_time = listing_info.get('endTime')
                 
+                # Compute match strength
+                match_strength = self._compute_match_strength(title, query_params)
+                
                 price_point = {
                     'source_id': query_params.get('source_id'),  # Passed from job
                     'intake_id': query_params.get('intake_id'),
@@ -238,6 +308,8 @@ class EbayCollector(BaseCollector):
                     'listing_url': listing_url,
                     'listing_title': title,
                     'listing_date': end_time,
+                    'observed_at': end_time,  # Use listing_date for observed_at
+                    'match_strength': float(match_strength),
                     'filtered_out': False
                 }
                 

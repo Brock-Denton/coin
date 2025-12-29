@@ -18,20 +18,39 @@ class ValuationEngine:
         self.sources = {s['id']: s for s in (sources or [])}
     
     def _filter_outliers(self, prices: List[int], method: str = 'iqr') -> List[int]:
-        """Filter outliers from price list.
+        """Filter outliers from price list using IQR or MAD method.
         
         Args:
             prices: List of prices in cents
-            method: Method to use ('iqr' or 'zscore')
+            method: Method to use ('iqr' or 'mad')
             
         Returns:
             Filtered list of prices
         """
-        if len(prices) < 3:
+        if len(prices) < 4:
             return prices
         
+        if method == 'mad':
+            # Median Absolute Deviation (MAD) method
+            sorted_prices = sorted(prices)
+            median = sorted_prices[len(sorted_prices) // 2]
+            
+            # Compute MAD
+            deviations = [abs(p - median) for p in sorted_prices]
+            mad = sorted(deviations)[len(deviations) // 2]
+            
+            # If MAD is 0, fall back to IQR
+            if mad == 0:
+                method = 'iqr'
+            else:
+                # Filter using MAD (typically 2.5-3 MAD from median)
+                threshold = 2.5 * mad
+                filtered = [p for p in prices if abs(p - median) <= threshold]
+                logger.debug("Filtered outliers (MAD)", original_count=len(prices), filtered_count=len(filtered))
+                return filtered
+        
         if method == 'iqr':
-            # Use IQR method
+            # Interquartile Range (IQR) method
             sorted_prices = sorted(prices)
             q1_index = len(sorted_prices) // 4
             q3_index = (3 * len(sorted_prices)) // 4
@@ -39,28 +58,33 @@ class ValuationEngine:
             q3 = sorted_prices[q3_index]
             iqr = q3 - q1
             
+            # Use 1.5 * IQR for outlier detection
             lower_bound = q1 - 1.5 * iqr
             upper_bound = q3 + 1.5 * iqr
             
             filtered = [p for p in prices if lower_bound <= p <= upper_bound]
-            logger.debug("Filtered outliers", original_count=len(prices), filtered_count=len(filtered))
+            logger.debug("Filtered outliers (IQR)", original_count=len(prices), filtered_count=len(filtered))
             return filtered
         
         return prices
     
     def _compute_percentiles(self, prices: List[int]) -> Dict[str, Optional[int]]:
-        """Compute percentiles from price list.
+        """Compute percentiles from price list including price bands.
         
         Args:
             prices: List of prices in cents
             
         Returns:
-            Dictionary with p10, median, p90, mean
+            Dictionary with p10, p20, p40, median (p50), p60, p80, p90, mean
         """
         if not prices:
             return {
                 'p10': None,
+                'p20': None,
+                'p40': None,
                 'median': None,
+                'p60': None,
+                'p80': None,
                 'p90': None,
                 'mean': None
             }
@@ -69,14 +93,17 @@ class ValuationEngine:
         n = len(sorted_prices)
         
         # Percentile indices (0-indexed)
-        p10_idx = int(0.10 * (n - 1))
-        median_idx = int(0.50 * (n - 1))
-        p90_idx = int(0.90 * (n - 1))
+        def percentile_idx(p: float) -> int:
+            return int(p * (n - 1))
         
         return {
-            'p10': sorted_prices[p10_idx],
-            'median': sorted_prices[median_idx],
-            'p90': sorted_prices[p90_idx],
+            'p10': sorted_prices[percentile_idx(0.10)],
+            'p20': sorted_prices[percentile_idx(0.20)],  # quick_sale
+            'p40': sorted_prices[percentile_idx(0.40)],  # fair_low
+            'median': sorted_prices[percentile_idx(0.50)],  # fair_mid
+            'p60': sorted_prices[percentile_idx(0.60)],  # fair_high
+            'p80': sorted_prices[percentile_idx(0.80)],  # premium
+            'p90': sorted_prices[percentile_idx(0.90)],
             'mean': int(statistics.mean(sorted_prices))
         }
     
@@ -84,7 +111,8 @@ class ValuationEngine:
         self,
         price_points: List[Dict],
         percentiles: Dict[str, Optional[int]],
-        comp_count: int
+        comp_count: int,
+        attribution: Optional[Dict] = None
     ) -> int:
         """Compute confidence score (1-10) based on various factors.
         
@@ -107,16 +135,27 @@ class ValuationEngine:
         elif comp_count >= 5:
             score += 1
         
-        # Factor 2: Source reputation (0-2 points)
-        source_reputations = []
+        # Factor 2: Match strength (0-2 points) - reward high match_strength
+        match_strengths = [pp.get('match_strength', 1.0) for pp in price_points if pp.get('match_strength') is not None]
+        if match_strengths:
+            avg_match_strength = sum(match_strengths) / len(match_strengths)
+            score += int(avg_match_strength * 2)
+        
+        # Factor 2b: Source reputation (weighted by match_strength)
+        weighted_reputation = 0.0
+        total_weight = 0.0
         for pp in price_points:
             source_id = pp.get('source_id')
+            match_strength = pp.get('match_strength', 1.0)
             if source_id and source_id in self.sources:
-                source_reputations.append(float(self.sources[source_id].get('reputation_weight', 1.0)))
+                rep_weight = float(self.sources[source_id].get('reputation_weight', 1.0))
+                weighted_reputation += rep_weight * match_strength
+                total_weight += match_strength
         
-        if source_reputations:
-            avg_reputation = sum(source_reputations) / len(source_reputations)
-            score += int(avg_reputation * 2)
+        if total_weight > 0:
+            avg_weighted_reputation = weighted_reputation / total_weight
+            # Add up to 1 point based on weighted reputation
+            score += int(avg_weighted_reputation)
         
         # Factor 3: Sold vs Ask ratio (0-2 points)
         sold_count = sum(1 for pp in price_points if pp.get('price_type') == 'sold')
@@ -130,7 +169,8 @@ class ValuationEngine:
             elif sold_ratio >= 0.5:
                 score += 1
             else:
-                # Cap confidence if mostly ask prices
+                # Cap confidence at 7 if only ASK comps exist (no sold comps)
+            if sold_count == 0:
                 score = min(score, 7)
         
         # Factor 4: Price spread tightness (0-3 points)
@@ -142,6 +182,23 @@ class ValuationEngine:
                 score += 2
             elif spread_ratio < 0.6:  # Moderate spread (<60%)
                 score += 1
+            # Wide spread penalizes confidence (no points added)
+        
+        # Factor 5: Condition flags penalty (from attribution)
+        if attribution:
+            condition_penalties = 0
+            if attribution.get('cleaned'):
+                condition_penalties += 1
+            if attribution.get('scratches'):
+                condition_penalties += 1
+            if attribution.get('rim_damage'):
+                condition_penalties += 1
+            if attribution.get('details_damaged'):
+                condition_penalties += 1
+            if attribution.get('harsh_cleaning'):
+                condition_penalties += 1
+            # Reduce score by condition penalties (up to -3 points)
+            score -= min(condition_penalties, 3)
         
         # Ensure score is between 1-10
         score = max(1, min(10, score))
@@ -195,7 +252,7 @@ class ValuationEngine:
         
         return " ".join(parts)
     
-    def compute_valuation(self, price_points: List[Dict]) -> Dict:
+    def compute_valuation(self, price_points: List[Dict], attribution: Optional[Dict] = None) -> Dict:
         """Compute valuation from price points.
         
         Args:
@@ -225,8 +282,8 @@ class ValuationEngine:
         # Extract prices
         prices = [pp['price_cents'] for pp in valid_points if pp.get('price_cents')]
         
-        # Filter outliers
-        filtered_prices = self._filter_outliers(prices)
+        # Filter outliers using IQR method (more robust than MAD for small datasets)
+        filtered_prices = self._filter_outliers(prices, method='iqr')
         
         # Compute percentiles
         percentiles = self._compute_percentiles(filtered_prices)
@@ -241,7 +298,7 @@ class ValuationEngine:
         comp_sources_count = len(unique_sources)
         
         # Compute confidence score
-        confidence_score = self._compute_confidence_score(valid_points, percentiles, comp_count)
+        confidence_score = self._compute_confidence_score(valid_points, percentiles, comp_count, attribution=attribution)
         
         # Generate explanation
         explanation = self._generate_explanation(
@@ -251,7 +308,11 @@ class ValuationEngine:
         
         return {
             'price_cents_p10': percentiles['p10'],
-            'price_cents_median': percentiles['median'],
+            'price_cents_p20': percentiles.get('p20'),  # quick_sale
+            'price_cents_p40': percentiles.get('p40'),  # fair_low
+            'price_cents_median': percentiles['median'],  # fair_mid
+            'price_cents_p60': percentiles.get('p60'),  # fair_high
+            'price_cents_p80': percentiles.get('p80'),  # premium
             'price_cents_p90': percentiles['p90'],
             'price_cents_mean': percentiles['mean'],
             'confidence_score': confidence_score,

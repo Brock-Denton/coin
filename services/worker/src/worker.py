@@ -5,7 +5,7 @@ import sys
 import structlog
 from src.config import settings
 from src.db import (
-    get_pending_jobs, lock_job, update_job_status, log_job_event,
+    claim_next_job, update_job_status, mark_job_retryable, log_job_event,
     insert_price_points, get_source, get_source_rules, get_attribution,
     upsert_valuation, supabase
 )
@@ -100,7 +100,7 @@ def process_job(job: dict):
         
         if not source.get('enabled'):
             logger.warning("Source is disabled", source_id=source_id)
-            update_job_status(job_id, 'cancelled', 'Source is disabled')
+            update_job_status(job_id, 'failed', 'Source is disabled')
             return
         
         # Get source rules (exclude keywords, etc.)
@@ -137,7 +137,7 @@ def process_job(job: dict):
         if not price_points:
             logger.warning("No price points collected", job_id=job_id)
             log_job_event(job_id, 'warning', 'No price points collected')
-            update_job_status(job_id, 'completed', None)
+            update_job_status(job_id, 'succeeded', None)
             return
         
         # Insert price points
@@ -164,9 +164,12 @@ def process_job(job: dict):
             if s:
                 sources.append(s)
         
+        # Get attribution for condition flag penalties
+        attribution = get_attribution(intake_id)
+        
         # Compute valuation
         engine = ValuationEngine(sources=sources)
-        valuation = engine.compute_valuation(all_price_points)
+        valuation = engine.compute_valuation(all_price_points, attribution=attribution)
         
         # Upsert valuation
         upsert_valuation(intake_id, valuation)
@@ -176,42 +179,45 @@ def process_job(job: dict):
             'comp_count': valuation['comp_count']
         })
         
-        # Mark job as completed
-        update_job_status(job_id, 'completed', None)
-        logger.info("Job completed", job_id=job_id)
+        # Mark job as succeeded
+        update_job_status(job_id, 'succeeded', None)
+        logger.info("Job succeeded", job_id=job_id)
         
     except Exception as e:
         error_msg = str(e)
         logger.error("Job failed", job_id=job_id, error=error_msg, exc_info=True)
         log_job_event(job_id, 'error', f'Job failed: {error_msg}')
-        update_job_status(job_id, 'failed', error_msg)
+        
+        # Check if error is retryable (transient errors)
+        retryable_errors = ['timeout', 'connection', 'rate limit', 'temporary', '503', '502', '504']
+        is_retryable = any(keyword in error_msg.lower() for keyword in retryable_errors)
+        
+        if is_retryable:
+            # Mark as retryable with exponential backoff
+            mark_job_retryable(job_id, base_delay_minutes=5)
+            logger.info("Job marked as retryable", job_id=job_id)
+        else:
+            # Mark as permanently failed
+            update_job_status(job_id, 'failed', error_msg)
 
 
 def run_worker():
-    """Main worker loop."""
+    """Main worker loop with atomic job claiming."""
     logger.info("Worker started", worker_id=settings.worker_id)
     
     while True:
         try:
-            # Get pending jobs
-            jobs = get_pending_jobs(limit=10)
+            # Atomically claim the next available job
+            job = claim_next_job(settings.worker_id)
             
-            if not jobs:
+            if job:
+                # Process the claimed job
+                process_job(job)
+                # Small delay after processing
+                time.sleep(1)
+            else:
+                # No jobs available, wait before next poll
                 time.sleep(settings.poll_interval_seconds)
-                continue
-            
-            # Process each job
-            for job in jobs:
-                # Try to lock the job
-                if lock_job(job['id'], settings.worker_id):
-                    # Process the job
-                    process_job(job)
-                else:
-                    # Job was locked by another worker, skip
-                    logger.debug("Job already locked", job_id=job['id'])
-            
-            # Small delay before next poll
-            time.sleep(1)
             
         except KeyboardInterrupt:
             logger.info("Worker stopped by user")
