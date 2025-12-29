@@ -60,7 +60,29 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
       )
     }
     
-    const productList = products || []
+    let productList = products || []
+    
+    // If no real products exist, show placeholder
+    const realProducts = productList.filter((p: any) => p.sku !== 'PLACEHOLDER-COMING-SOON')
+    if (realProducts.length === 0) {
+      // Get placeholder product if it exists
+      const { data: placeholder } = await supabase
+        .from('products')
+        .select(`
+          *,
+          product_images(image_url, is_primary)
+        `)
+        .eq('status', 'published')
+        .eq('sku', 'PLACEHOLDER-COMING-SOON')
+        .single()
+      
+      if (placeholder) {
+        productList = [placeholder]
+      }
+    } else {
+      // Filter out placeholder if real products exist
+      productList = realProducts
+    }
   
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -78,17 +100,31 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
                   />
                 </div>
               )}
+              {!primaryImage && product.sku === 'PLACEHOLDER-COMING-SOON' && (
+                <div className="aspect-square relative bg-muted flex items-center justify-center">
+                  <div className="text-center p-8">
+                    <p className="text-6xl mb-4">🪙</p>
+                    <p className="text-sm text-muted-foreground">Coming Soon</p>
+                  </div>
+                </div>
+              )}
               <CardHeader>
                 <CardTitle>{product.title}</CardTitle>
                 <CardDescription>
-                  ${(product.price_cents / 100).toFixed(2)}
+                  {product.sku === 'PLACEHOLDER-COMING-SOON' ? (
+                    product.description
+                  ) : (
+                    `$${(product.price_cents / 100).toFixed(2)}`
+                  )}
                 </CardDescription>
               </CardHeader>
-              <CardFooter>
-                <Link href={`/product/${product.id}`} className="w-full">
-                  <Button className="w-full">View Details</Button>
-                </Link>
-              </CardFooter>
+              {product.sku !== 'PLACEHOLDER-COMING-SOON' && (
+                <CardFooter>
+                  <Link href={`/product/${product.id}`} className="w-full">
+                    <Button className="w-full">View Details</Button>
+                  </Link>
+                </CardFooter>
+              )}
             </Card>
           )
         })
