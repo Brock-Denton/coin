@@ -460,7 +460,7 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Denomination</Label>
+              <Label>Denomination (required)</Label>
               <Select
                 value={attribution.denomination || ''}
                 onValueChange={(value) => setAttribution({ ...attribution, denomination: value })}
@@ -479,7 +479,7 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
               </Select>
             </div>
             <div>
-              <Label>Year</Label>
+              <Label>Year (required)</Label>
               <Input
                 type="number"
                 value={attribution.year || ''}
@@ -494,6 +494,14 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
               />
             </div>
             <div>
+              <Label>Series</Label>
+              <Input
+                value={attribution.series || ''}
+                onChange={(e) => setAttribution({ ...attribution, series: e.target.value })}
+                placeholder="e.g., Morgan Dollar, Peace Dollar, Washington Quarter"
+              />
+            </div>
+            <div>
               <Label>Grade</Label>
               <Input
                 value={attribution.grade || ''}
@@ -502,7 +510,7 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
             </div>
           </div>
           <div>
-            <Label>Title/Keywords</Label>
+            <Label>Title/Keywords (required if Series is empty)</Label>
             <Input
               value={attribution.title || ''}
               onChange={(e) => setAttribution({ ...attribution, title: e.target.value })}
