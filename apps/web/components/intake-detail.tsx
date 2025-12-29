@@ -13,6 +13,8 @@ import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { SearchQueries } from '@/components/search-queries'
 import { JobStatus } from '@/components/job-status'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Trash2 } from 'lucide-react'
 
 interface IntakeDetailProps {
   intake: any
@@ -23,6 +25,8 @@ interface IntakeDetailProps {
 export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
   const [loading, setLoading] = useState(false)
   const [attribution, setAttribution] = useState(intake.attributions?.[0] || {})
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const router = useRouter()
   const supabase = createClient()
   
@@ -71,6 +75,24 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
     }
   }
   
+  const handleDeleteIntake = async () => {
+    setDeleting(true)
+    try {
+      const { error } = await supabase
+        .from('coin_intakes')
+        .delete()
+        .eq('id', intake.id)
+      
+      if (error) throw error
+      
+      // Redirect to intakes list
+      router.push('/admin/intakes')
+    } catch (err: any) {
+      alert(`Error deleting intake: ${err.message}`)
+      setDeleting(false)
+    }
+  }
+
   const handleSaveAttribution = async () => {
     setLoading(true)
     try {
@@ -154,9 +176,52 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
   
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-4xl font-bold mb-2">{intake.intake_number}</h1>
-        <Badge>{intake.status}</Badge>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-4xl font-bold mb-2">{intake.intake_number}</h1>
+          <Badge>{intake.status}</Badge>
+        </div>
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogTrigger asChild>
+            <Button variant="destructive" size="sm">
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete Intake
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Intake</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete intake <strong>{intake.intake_number}</strong>? 
+                This will permanently delete the intake and all associated data including:
+                <ul className="list-disc list-inside mt-2 space-y-1">
+                  <li>Photos and media</li>
+                  <li>Attribution data</li>
+                  <li>Price points and valuations</li>
+                  <li>Scrape jobs and logs</li>
+                  <li>Manual search results</li>
+                </ul>
+                <strong className="block mt-3 text-destructive">This action cannot be undone.</strong>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDeleteDialogOpen(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteIntake}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting...' : 'Delete'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
       
       {/* Images */}
