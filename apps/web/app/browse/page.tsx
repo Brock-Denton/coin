@@ -20,10 +20,16 @@ interface BrowsePageProps {
 }
 
 async function BrowseResults({ searchParams }: BrowsePageProps) {
-  const params = await searchParams
-  const supabase = await createClient()
-  
   try {
+    const params = await searchParams
+    const supabase = await createClient()
+    
+    if (!supabase) {
+      return (
+        <p className="text-muted-foreground col-span-full">Error: Database connection failed. Please try again later.</p>
+      )
+    }
+    
     // First, exclude placeholder and check if there are any real products
     let realProductsQuery = supabase
       .from('products')
@@ -32,7 +38,11 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
       .neq('sku', 'PLACEHOLDER-COMING-SOON')
       .limit(1)
     
-    const { data: realProductsCheck } = await realProductsQuery
+    const { data: realProductsCheck, error: checkError } = await realProductsQuery
+    
+    if (checkError) {
+      console.error('Error checking for real products:', checkError)
+    }
     
     const hasRealProducts = realProductsCheck && realProductsCheck.length > 0
     
@@ -133,10 +143,15 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
         )}
       </div>
     )
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error in BrowseResults:', error)
     return (
-      <p className="text-muted-foreground col-span-full">Error loading products. Please try again later.</p>
+      <div className="col-span-full">
+        <p className="text-muted-foreground mb-2">Error loading products. Please try again later.</p>
+        {process.env.NODE_ENV === 'development' && (
+          <p className="text-xs text-red-600 mt-2">{error?.message || String(error)}</p>
+        )}
+      </div>
     )
   }
 }
