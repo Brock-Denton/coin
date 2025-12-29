@@ -24,6 +24,19 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
   const supabase = await createClient()
   
   try {
+    // First, exclude placeholder and check if there are any real products
+    let realProductsQuery = supabase
+      .from('products')
+      .select('id')
+      .eq('status', 'published')
+      .neq('sku', 'PLACEHOLDER-COMING-SOON')
+      .limit(1)
+    
+    const { data: realProductsCheck } = await realProductsQuery
+    
+    const hasRealProducts = realProductsCheck && realProductsCheck.length > 0
+    
+    // Now build the actual query
     let query = supabase
       .from('products')
       .select(`
@@ -32,22 +45,31 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
       `)
       .eq('status', 'published')
     
-    // Apply filters
-    if (params.denomination) {
-      query = query.eq('intake_id', params.denomination) // This would need a join to attributions in real implementation
+    // If there are real products, exclude placeholder. Otherwise, only get placeholder.
+    if (hasRealProducts) {
+      query = query.neq('sku', 'PLACEHOLDER-COMING-SOON')
+    } else {
+      query = query.eq('sku', 'PLACEHOLDER-COMING-SOON')
     }
     
-    if (params.price_min) {
-      const priceMin = parseInt(params.price_min)
-      if (!isNaN(priceMin)) {
-        query = query.gte('price_cents', priceMin * 100)
+    // Apply filters (only if we have real products and not showing placeholder)
+    if (hasRealProducts) {
+      if (params.denomination) {
+        query = query.eq('intake_id', params.denomination) // This would need a join to attributions in real implementation
       }
-    }
-    
-    if (params.price_max) {
-      const priceMax = parseInt(params.price_max)
-      if (!isNaN(priceMax)) {
-        query = query.lte('price_cents', priceMax * 100)
+      
+      if (params.price_min) {
+        const priceMin = parseInt(params.price_min)
+        if (!isNaN(priceMin)) {
+          query = query.gte('price_cents', priceMin * 100)
+        }
+      }
+      
+      if (params.price_max) {
+        const priceMax = parseInt(params.price_max)
+        if (!isNaN(priceMax)) {
+          query = query.lte('price_cents', priceMax * 100)
+        }
       }
     }
     
@@ -60,29 +82,7 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
       )
     }
     
-    let productList = products || []
-    
-    // If no real products exist, show placeholder
-    const realProducts = productList.filter((p: any) => p.sku !== 'PLACEHOLDER-COMING-SOON')
-    if (realProducts.length === 0) {
-      // Get placeholder product if it exists
-      const { data: placeholder } = await supabase
-        .from('products')
-        .select(`
-          *,
-          product_images(image_url, is_primary)
-        `)
-        .eq('status', 'published')
-        .eq('sku', 'PLACEHOLDER-COMING-SOON')
-        .single()
-      
-      if (placeholder) {
-        productList = [placeholder]
-      }
-    } else {
-      // Filter out placeholder if real products exist
-      productList = realProducts
-    }
+    const productList = products || []
   
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
