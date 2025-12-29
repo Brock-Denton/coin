@@ -30,12 +30,12 @@ export default async function HomePage() {
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-[#09090b]">
       <Nav />
       <main className="container mx-auto px-4 py-8">
         <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-4">US Coin Inventory & Pricing</h1>
-          <p className="text-lg text-muted-foreground">
+          <h1 className="text-4xl font-bold mb-4 text-white">US Coin Inventory & Pricing</h1>
+          <p className="text-lg text-[#a1a1aa]">
             Authenticated US coins with transparent, data-driven pricing
           </p>
         </div>

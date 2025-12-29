@@ -216,7 +216,7 @@ export function IntakesTable({ intakes }: IntakesTableProps) {
           <TableBody>
             {intakes.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={7} className="text-center text-[#a1a1aa] py-8">
                   No intakes found.
                 </TableCell>
               </TableRow>
@@ -263,10 +263,10 @@ export function IntakesTable({ intakes }: IntakesTableProps) {
                           </div>
                         </div>
                       ) : (
-                        <span className="text-sm text-muted-foreground">No valuation</span>
+                        <span className="text-sm text-[#a1a1aa]">No valuation</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="text-sm text-[#a1a1aa]">
                       {new Date(intake.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">

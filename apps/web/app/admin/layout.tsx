@@ -27,31 +27,31 @@ export default async function AdminLayout({
   // }
   
   return (
-    <div className="min-h-screen">
-      <nav className="border-b">
+    <div className="min-h-screen bg-[#09090b]">
+      <nav className="border-b border-[#27272a] glass-strong">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/admin" className="text-xl font-bold">
+            <Link href="/admin" className="text-xl font-bold text-white hover:text-white/80 transition-colors">
               Admin - coins.gov.technology
             </Link>
             <div className="flex items-center gap-4">
               <Link href="/admin/intakes">
-                <Button variant="ghost">Intakes</Button>
+                <Button variant="ghost" className="hover:bg-white/10">Intakes</Button>
               </Link>
               <Link href="/admin/sources">
-                <Button variant="ghost">Sources</Button>
+                <Button variant="ghost" className="hover:bg-white/10">Sources</Button>
               </Link>
               <Link href="/admin/orders">
-                <Button variant="ghost">Orders</Button>
+                <Button variant="ghost" className="hover:bg-white/10">Orders</Button>
               </Link>
               <form action="/admin/logout" method="post">
-                <Button type="submit" variant="outline">Logout</Button>
+                <Button type="submit" variant="outline" className="border-[#27272a] hover:border-white/30 hover:bg-white/10">Logout</Button>
               </form>
             </div>
           </div>
         </div>
       </nav>
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-8 text-white">
         {children}
       </main>
     </div>

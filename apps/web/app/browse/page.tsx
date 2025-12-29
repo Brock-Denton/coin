@@ -158,10 +158,10 @@ async function BrowseResults({ searchParams }: BrowsePageProps) {
 
 export default async function BrowsePage(props: BrowsePageProps) {
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-[#09090b]">
       <Nav />
       <main className="container mx-auto px-4 py-8">
-        <h1 className="text-4xl font-bold mb-8">Browse Coins</h1>
+        <h1 className="text-4xl font-bold mb-8 text-white">Browse Coins</h1>
         
         <div className="mb-8">
           <BrowseFiltersWrapper />

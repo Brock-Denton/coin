@@ -29,7 +29,7 @@ export default async function IntakesPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-4xl font-bold">Coin Intakes</h1>
+        <h1 className="text-4xl font-bold text-white">Coin Intakes</h1>
         <Link href="/admin/intakes/new">
           <Button>New Intake</Button>
         </Link>
