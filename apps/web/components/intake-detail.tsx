@@ -14,8 +14,9 @@ import { useRouter } from 'next/navigation'
 import { SearchQueries } from '@/components/search-queries'
 import { JobStatus } from '@/components/job-status'
 import { PricingReadyChecklist } from '@/components/pricing-ready-checklist'
+import { PricingSummaryPanel } from '@/components/pricing-summary-panel'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Trash2 } from 'lucide-react'
+import { Trash2, RefreshCw } from 'lucide-react'
 
 interface IntakeDetailProps {
   intake: any
@@ -25,52 +26,183 @@ interface IntakeDetailProps {
 
 export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
   const [loading, setLoading] = useState(false)
-  const [attribution, setAttribution] = useState(intake.attributions?.[0] || {})
+  // Initialize attribution with keywords as strings for UI
+  const initialAttribution = intake.attributions?.[0] || {}
+  const [attribution, setAttribution] = useState({
+    ...initialAttribution,
+    keywords_include_string: initialAttribution.keywords_include 
+      ? (Array.isArray(initialAttribution.keywords_include) 
+          ? initialAttribution.keywords_include.join(', ') 
+          : initialAttribution.keywords_include)
+      : '',
+    keywords_exclude_string: initialAttribution.keywords_exclude
+      ? (Array.isArray(initialAttribution.keywords_exclude)
+          ? initialAttribution.keywords_exclude.join(', ')
+          : initialAttribution.keywords_exclude)
+      : '',
+  })
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [pricingMode, setPricingMode] = useState<'ebay_only' | 'all_sources'>('ebay_only')
+  const [pricingMessage, setPricingMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const router = useRouter()
   const supabase = createClient()
   
   const handleRunPricing = async () => {
     setLoading(true)
+    setPricingMessage(null)
     try {
-      // Get enabled sources
-      const { data: sources } = await supabase
-        .from('sources')
-        .select('id')
-        .eq('enabled', true)
-      
-      if (!sources || sources.length === 0) {
-        alert('No enabled sources found')
+      // Check for existing active jobs (pending/running)
+      const activeJobs = jobs.filter((j: any) => j.status === 'pending' || j.status === 'running')
+      if (activeJobs.length > 0) {
+        setPricingMessage({ type: 'error', text: `Cannot queue: ${activeJobs.length} active job(s) already exist. Use "Re-run Pricing" after they complete.` })
+        setLoading(false)
         return
       }
-      
-      // Create scrape jobs for each enabled source
-      const jobs = sources.map((source: any) => ({
-        intake_id: intake.id,
-        source_id: source.id,
-        status: 'pending',
-        query_params: {
-          year: attribution.year,
-          mintmark: attribution.mintmark,
-          denomination: attribution.denomination,
-          series: attribution.series,
-          title: attribution.title,
+
+      let sourceIds: string[] = []
+
+      if (pricingMode === 'ebay_only') {
+        // Get eBay source
+        const { data: ebaySources, error: ebayError } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('enabled', true)
+          .eq('adapter_type', 'ebay_api')
+          .limit(1)
+        
+        if (ebayError) throw ebayError
+        
+        if (!ebaySources || ebaySources.length === 0) {
+          setPricingMessage({ type: 'error', text: 'No enabled eBay source found' })
+          setLoading(false)
+          return
         }
-      }))
-      
-      const { error } = await supabase
-        .from('scrape_jobs')
-        .insert(jobs)
-      
-      if (error) {
-        alert(`Error creating jobs: ${error.message}`)
+        
+        sourceIds = ebaySources.map((s: any) => s.id)
       } else {
-        alert('Pricing jobs created successfully')
-        router.refresh()
+        // Get all enabled sources in stable order
+        const { data: allSources, error: allError } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('enabled', true)
+          .order('name', { ascending: true })
+        
+        if (allError) throw allError
+        
+        if (!allSources || allSources.length === 0) {
+          setPricingMessage({ type: 'error', text: 'No enabled sources found' })
+          setLoading(false)
+          return
+        }
+        
+        sourceIds = allSources.map((s: any) => s.id)
+      }
+
+      // Call enqueue_jobs RPC
+      const { data, error } = await supabase.rpc('enqueue_jobs', {
+        p_intake_id: intake.id,
+        p_source_ids: sourceIds,
+        p_base_delay_seconds: 0,
+        p_stagger_seconds: 2
+      })
+
+      if (error) {
+        setPricingMessage({ type: 'error', text: `Error: ${error.message}` })
+      } else {
+        const createdCount = data || 0
+        if (createdCount === 0) {
+          setPricingMessage({ type: 'error', text: 'No jobs created. Pending jobs may already exist for these sources.' })
+        } else {
+          setPricingMessage({ type: 'success', text: `Successfully queued ${createdCount} pricing job(s)` })
+          router.refresh()
+        }
       }
     } catch (err: any) {
-      alert(`Error: ${err.message}`)
+      setPricingMessage({ type: 'error', text: `Error: ${err.message}` })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRerunPricing = async () => {
+    setLoading(true)
+    setPricingMessage(null)
+    try {
+      // Check for existing active jobs (pending/running)
+      const activeJobs = jobs.filter((j: any) => j.status === 'pending' || j.status === 'running')
+      if (activeJobs.length > 0) {
+        setPricingMessage({ type: 'error', text: `Cannot re-run: ${activeJobs.length} active job(s) already exist. Wait for them to complete.` })
+        setLoading(false)
+        return
+      }
+
+      // Check if latest jobs are terminal (succeeded/failed)
+      const latestJobs = jobs.sort((a: any, b: any) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )
+      
+      if (latestJobs.length === 0) {
+        // No previous jobs, treat as first run
+        await handleRunPricing()
+        return
+      }
+
+      // Get source IDs based on mode (same as handleRunPricing)
+      let sourceIds: string[] = []
+
+      if (pricingMode === 'ebay_only') {
+        const { data: ebaySources, error: ebayError } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('enabled', true)
+          .eq('adapter_type', 'ebay_api')
+          .limit(1)
+        
+        if (ebayError) throw ebayError
+        if (!ebaySources || ebaySources.length === 0) {
+          setPricingMessage({ type: 'error', text: 'No enabled eBay source found' })
+          setLoading(false)
+          return
+        }
+        sourceIds = ebaySources.map((s: any) => s.id)
+      } else {
+        const { data: allSources, error: allError } = await supabase
+          .from('sources')
+          .select('id')
+          .eq('enabled', true)
+          .order('name', { ascending: true })
+        
+        if (allError) throw allError
+        if (!allSources || allSources.length === 0) {
+          setPricingMessage({ type: 'error', text: 'No enabled sources found' })
+          setLoading(false)
+          return
+        }
+        sourceIds = allSources.map((s: any) => s.id)
+      }
+
+      // Call enqueue_jobs RPC (will automatically handle duplicates via unique index)
+      const { data, error } = await supabase.rpc('enqueue_jobs', {
+        p_intake_id: intake.id,
+        p_source_ids: sourceIds,
+        p_base_delay_seconds: 0,
+        p_stagger_seconds: 2
+      })
+
+      if (error) {
+        setPricingMessage({ type: 'error', text: `Error: ${error.message}` })
+      } else {
+        const createdCount = data || 0
+        if (createdCount === 0) {
+          setPricingMessage({ type: 'error', text: 'No jobs created. Pending jobs may already exist.' })
+        } else {
+          setPricingMessage({ type: 'success', text: `Successfully queued ${createdCount} pricing job(s)` })
+          router.refresh()
+        }
+      }
+    } catch (err: any) {
+      setPricingMessage({ type: 'error', text: `Error: ${err.message}` })
     } finally {
       setLoading(false)
     }
@@ -94,14 +226,47 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
     }
   }
 
+  // Normalize keywords from comma-separated string to array
+  const normalizeKeywords = (keywordsString: string): string[] => {
+    if (!keywordsString || keywordsString.trim() === '') return []
+    return keywordsString
+      .split(',')
+      .map(k => k.trim().toLowerCase())
+      .filter(k => k.length > 0)
+  }
+
+  // Convert keywords array to comma-separated string for display
+  const keywordsToString = (keywordsArray: string[] | null | undefined): string => {
+    if (!keywordsArray || !Array.isArray(keywordsArray)) return ''
+    return keywordsArray.join(', ')
+  }
+
   const handleSaveAttribution = async () => {
     setLoading(true)
     try {
+      // Normalize keywords from comma-separated strings to arrays
+      const keywordsIncludeArray = normalizeKeywords(attribution.keywords_include_string || '')
+      const keywordsExcludeArray = normalizeKeywords(attribution.keywords_exclude_string || '')
+
+      const attributionData: any = {
+        intake_id: intake.id,
+        year: attribution.year || null,
+        mintmark: attribution.mintmark || null,
+        denomination: attribution.denomination || null,
+        series: attribution.series || null,
+        variety: attribution.variety || null,
+        grade: attribution.grade || null,
+        title: attribution.title || null,
+        notes: attribution.notes || null,
+        keywords_include: keywordsIncludeArray,
+        keywords_exclude: keywordsExcludeArray,
+      }
+
       if (attribution.id) {
         // Update
         const { error } = await supabase
           .from('attributions')
-          .update(attribution)
+          .update(attributionData)
           .eq('id', attribution.id)
         
         if (error) throw error
@@ -109,12 +274,19 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         // Create
         const { error } = await supabase
           .from('attributions')
-          .insert({ ...attribution, intake_id: intake.id })
+          .insert(attributionData)
         
         if (error) throw error
       }
       
-      alert('Attribution saved')
+      // Update local state to reflect saved keywords as strings
+      setAttribution({
+        ...attribution,
+        keywords_include_string: keywordsIncludeArray.join(', '),
+        keywords_exclude_string: keywordsExcludeArray.join(', '),
+      })
+      
+      alert('Attribution saved successfully')
       router.refresh()
     } catch (err: any) {
       alert(`Error: ${err.message}`)
@@ -228,6 +400,9 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       {/* Pricing Ready Checklist */}
       <PricingReadyChecklist intake={intake} />
       
+      {/* Pricing Summary Panel */}
+      <PricingSummaryPanel valuation={intake.valuations?.[0]} pricePoints={pricePoints} />
+      
       {/* Images */}
       <Card>
         <CardHeader>
@@ -335,6 +510,28 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
             />
           </div>
           <div>
+            <Label>Keywords Include (comma-separated)</Label>
+            <Input
+              value={attribution.keywords_include_string || ''}
+              onChange={(e) => setAttribution({ ...attribution, keywords_include_string: e.target.value })}
+              placeholder="e.g., uncirculated, mint state, ms65"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Keywords to include in search queries (will be normalized: trimmed, lowercased)
+            </p>
+          </div>
+          <div>
+            <Label>Keywords Exclude (comma-separated)</Label>
+            <Input
+              value={attribution.keywords_exclude_string || ''}
+              onChange={(e) => setAttribution({ ...attribution, keywords_exclude_string: e.target.value })}
+              placeholder="e.g., damaged, cleaned, scratch"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Keywords to exclude from search results (will be normalized: trimmed, lowercased)
+            </p>
+          </div>
+          <div>
             <Label>Notes</Label>
             <Textarea
               value={attribution.notes || ''}
@@ -355,38 +552,39 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Pricing</CardTitle>
+              <CardTitle>Pricing Jobs</CardTitle>
               <CardDescription>Run pricing jobs and view results</CardDescription>
             </div>
-            <Button onClick={handleRunPricing} disabled={loading}>
-              Run Pricing
-            </Button>
+            <div className="flex items-center gap-2">
+              <Select value={pricingMode} onValueChange={(value: 'ebay_only' | 'all_sources') => setPricingMode(value)}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ebay_only">eBay Only</SelectItem>
+                  <SelectItem value="all_sources">All Enabled Sources</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button onClick={handleRunPricing} disabled={loading}>
+                Run Pricing
+              </Button>
+              <Button onClick={handleRerunPricing} disabled={loading} variant="outline">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Re-run Pricing
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Job Status */}
-          <JobStatus intakeId={intake.id} jobs={jobs} onRefresh={() => router.refresh()} />
-          
-          {valuation && (
-            <div className="p-4 bg-muted rounded-lg">
-              <h3 className="font-semibold mb-2">Valuation</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm text-muted-foreground">Median Price</div>
-                  <div className="text-2xl font-bold">
-                    {valuation.price_cents_median ? `$${(valuation.price_cents_median / 100).toFixed(2)}` : 'N/A'}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-sm text-muted-foreground">Confidence</div>
-                  <div className="text-2xl font-bold">{valuation.confidence_score}/10</div>
-                </div>
-              </div>
-              {valuation.explanation && (
-                <p className="mt-4 text-sm">{valuation.explanation}</p>
-              )}
+          {/* Pricing Message */}
+          {pricingMessage && (
+            <div className={`p-3 rounded-lg ${pricingMessage.type === 'success' ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-900 dark:text-green-100' : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'}`}>
+              {pricingMessage.text}
             </div>
           )}
+          
+          {/* Job Status */}
+          <JobStatus intakeId={intake.id} jobs={jobs} onRefresh={() => router.refresh()} />
           
           <div>
             <h3 className="font-semibold mb-2">Price Points ({pricePoints.length})</h3>

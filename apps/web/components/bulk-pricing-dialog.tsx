@@ -99,62 +99,41 @@ export function BulkPricingDialog({
 
     setLoading(true)
     setError(null)
-
+    
     try {
-      // Fetch attributions for all selected intakes
-      const { data: attributions, error: attrError } = await supabase
-        .from('attributions')
-        .select('*')
-        .in('intake_id', intakeIds)
-
-      if (attrError) throw attrError
-
-      // Create a map of intake_id -> attribution
-      const attributionMap = new Map(
-        (attributions || []).map(attr => [attr.intake_id, attr])
-      )
-
-      // Create scrape jobs: intake × source combinations
-      const jobs = []
-      for (const intakeId of intakeIds) {
-        const attribution = attributionMap.get(intakeId)
+      const sourceIdsArray = Array.from(selectedSourceIds)
+      let totalCreated = 0
+      
+      // For each intake, call enqueue_jobs with staggered scheduling
+      // Use base_delay_seconds = intakeIndex * 2 to stagger per intake
+      for (let i = 0; i < intakeIds.length; i++) {
+        const intakeId = intakeIds[i]
+        const baseDelaySeconds = i * 2  // Stagger each intake by 2 seconds
         
-        // Only create jobs if attribution exists
-        if (attribution) {
-          for (const sourceId of selectedSourceIds) {
-            jobs.push({
-              intake_id: intakeId,
-              source_id: sourceId,
-              status: 'pending',
-              query_params: {
-                year: attribution.year,
-                mintmark: attribution.mintmark,
-                denomination: attribution.denomination,
-                series: attribution.series,
-                title: attribution.title,
-              },
-            })
-          }
+        const { data, error: enqueueError } = await supabase.rpc('enqueue_jobs', {
+          p_intake_id: intakeId,
+          p_source_ids: sourceIdsArray,
+          p_base_delay_seconds: baseDelaySeconds,
+          p_stagger_seconds: 2  // Stagger each source within intake by 2 seconds
+        })
+        
+        if (enqueueError) {
+          console.error(`Error enqueueing jobs for intake ${intakeId}:`, enqueueError)
+          // Continue with other intakes even if one fails
+          continue
         }
+        
+        totalCreated += data || 0
       }
-
-      if (jobs.length === 0) {
-        setError('No attributions found for selected intakes. Please ensure all intakes have attribution data.')
-        setLoading(false)
-        return
+      
+      if (totalCreated === 0) {
+        setError('No jobs created. Pending jobs may already exist for these intakes/sources.')
+      } else {
+        onSuccess()
       }
-
-      // Insert all jobs
-      const { error: insertError } = await supabase
-        .from('scrape_jobs')
-        .insert(jobs)
-
-      if (insertError) throw insertError
-
-      // Success
-      onSuccess()
     } catch (err: any) {
-      setError(`Failed to create pricing jobs: ${err.message}`)
+      setError(`Error: ${err.message}`)
+    } finally {
       setLoading(false)
     }
   }

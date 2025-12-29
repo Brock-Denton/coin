@@ -9,7 +9,8 @@ from src.config import settings
 from src.db import (
     claim_next_job, update_job_status, mark_job_retryable, log_job_event,
     insert_price_points, get_source, get_source_rules, get_attribution,
-    upsert_valuation, update_job_heartbeat, reclaim_stuck_jobs, supabase
+    upsert_valuation, update_job_heartbeat, reclaim_stuck_jobs, supabase,
+    upsert_worker_heartbeat
 )
 from src.collectors.ebay import EbayCollector
 from src.valuation import ValuationEngine
@@ -123,16 +124,37 @@ def process_job(job: dict):
             update_job_status(job_id, 'failed', 'Source is disabled')
             return
         
+        # Get attribution (always fetch to get keywords)
+        attribution = get_attribution(intake_id)
+        
         # Get source rules (exclude keywords, etc.)
         rules = get_source_rules(source_id)
-        exclude_keywords = [
+        source_exclude_keywords = [
             r['rule_value'] for r in rules
             if r['rule_type'] == 'exclude_keywords' and r['active']
         ]
+        # Normalize source-level exclude keywords (trim, lowercase)
+        source_exclude_keywords = [k.strip().lower() for k in source_exclude_keywords if k and k.strip()]
         
-        # Get attribution if needed to build query
+        # Get intake-level keywords from attribution
+        intake_keywords_exclude = attribution.get('keywords_exclude', []) if attribution else []
+        intake_keywords_include = attribution.get('keywords_include', []) if attribution else []
+        
+        # Ensure keywords are arrays and normalized (already normalized in DB, but verify)
+        if not isinstance(intake_keywords_exclude, list):
+            intake_keywords_exclude = []
+        if not isinstance(intake_keywords_include, list):
+            intake_keywords_include = []
+        
+        # Normalize intake keywords (trim, lowercase) - should already be normalized but ensure
+        intake_keywords_exclude = [str(k).strip().lower() for k in intake_keywords_exclude if k]
+        intake_keywords_include = [str(k).strip().lower() for k in intake_keywords_include if k]
+        
+        # Merge intake-level and source-level exclude keywords
+        all_exclude_keywords = list(set(source_exclude_keywords + intake_keywords_exclude))
+        
+        # Build query_params if not already provided (from enqueue_jobs RPC)
         if not query_params or 'title' not in query_params:
-            attribution = get_attribution(intake_id)
             if attribution:
                 query_params = {
                     'year': attribution.get('year'),
@@ -142,17 +164,28 @@ def process_job(job: dict):
                     'title': attribution.get('title'),
                     'intake_id': intake_id,
                     'source_id': source_id,
-                    'job_id': job_id
+                    'job_id': job_id,
+                    'keywords_include': intake_keywords_include,
+                    'keywords_exclude': intake_keywords_exclude
                 }
+        else:
+            # Merge keywords from query_params with attribution (query_params takes precedence if provided by RPC)
+            if 'keywords_include' not in query_params and intake_keywords_include:
+                query_params['keywords_include'] = intake_keywords_include
+            if 'keywords_exclude' not in query_params and intake_keywords_exclude:
+                query_params['keywords_exclude'] = intake_keywords_exclude
         
         # Get collector
         collector = get_collector(source)
         if not collector:
             raise Exception(f"Failed to get collector for source: {source_id}")
         
-        # Collect price points
-        log_job_event(job_id, 'info', 'Starting collection', {'source': source['name']})
-        price_points = collector.collect(query_params, exclude_keywords=exclude_keywords)
+        # Collect price points (pass merged exclude keywords)
+        log_job_event(job_id, 'info', 'Starting collection', {
+            'source': source['name'],
+            'exclude_keywords_count': len(all_exclude_keywords)
+        })
+        price_points = collector.collect(query_params, exclude_keywords=all_exclude_keywords)
         
         if not price_points:
             logger.warning("No price points collected", job_id=job_id)
@@ -265,42 +298,81 @@ def _heartbeat_loop(job_id: str, stop_event: threading.Event):
         stop_event.wait(heartbeat_interval)
 
 
+def _worker_heartbeat_loop(stop_event: threading.Event):
+    """Independent background thread to update worker heartbeat (not tied to jobs).
+    
+    Runs every 30 seconds regardless of job activity.
+    
+    Args:
+        stop_event: Event to signal thread to stop
+    """
+    heartbeat_interval = 30  # Update worker heartbeat every 30 seconds
+    while not stop_event.is_set():
+        try:
+            # Get optional metadata (can be extended with version, hostname, etc.)
+            meta = {
+                'worker_id': settings.worker_id
+            }
+            upsert_worker_heartbeat(settings.worker_id, meta)
+        except Exception as e:
+            logger.error("Failed to upsert worker heartbeat", worker_id=settings.worker_id, error=str(e))
+        
+        # Wait for interval or stop signal
+        stop_event.wait(heartbeat_interval)
+
+
 def run_worker():
     """Main worker loop with atomic job claiming."""
     logger.info("Worker started", worker_id=settings.worker_id)
+    
+    # Start independent worker heartbeat thread (runs regardless of jobs)
+    worker_heartbeat_stop = threading.Event()
+    worker_heartbeat_thread = threading.Thread(
+        target=_worker_heartbeat_loop,
+        args=(worker_heartbeat_stop,),
+        daemon=True
+    )
+    worker_heartbeat_thread.start()
+    logger.info("Worker heartbeat thread started", worker_id=settings.worker_id)
     
     # Track last reclaim check time
     last_reclaim_check = datetime.now()
     reclaim_check_interval = 60  # Check for stuck jobs every 60 seconds
     
-    while True:
-        try:
-            # Periodically check for stuck jobs
-            now = datetime.now()
-            if (now - last_reclaim_check).total_seconds() >= reclaim_check_interval:
-                reclaimed = reclaim_stuck_jobs()
-                if reclaimed > 0:
-                    logger.info("Reclaimed stuck jobs", count=reclaimed, worker_id=settings.worker_id)
-                last_reclaim_check = now
-            
-            # Atomically claim the next available job
-            job = claim_next_job(settings.worker_id)
-            
-            if job:
-                # Process the claimed job
-                process_job(job)
-                # Small delay after processing
-                time.sleep(1)
-            else:
-                # No jobs available, wait before next poll
+    try:
+        while True:
+            try:
+                # Periodically check for stuck jobs
+                now = datetime.now()
+                if (now - last_reclaim_check).total_seconds() >= reclaim_check_interval:
+                    reclaimed = reclaim_stuck_jobs()
+                    if reclaimed > 0:
+                        logger.info("Reclaimed stuck jobs", count=reclaimed, worker_id=settings.worker_id)
+                    last_reclaim_check = now
+                
+                # Atomically claim the next available job
+                job = claim_next_job(settings.worker_id)
+                
+                if job:
+                    # Process the claimed job
+                    process_job(job)
+                    # Small delay after processing
+                    time.sleep(1)
+                else:
+                    # No jobs available, wait before next poll
+                    time.sleep(settings.poll_interval_seconds)
+                
+            except KeyboardInterrupt:
+                logger.info("Worker stopped by user", worker_id=settings.worker_id)
+                break
+            except Exception as e:
+                logger.error("Worker error", error=str(e), worker_id=settings.worker_id, exc_info=True)
                 time.sleep(settings.poll_interval_seconds)
-            
-        except KeyboardInterrupt:
-            logger.info("Worker stopped by user", worker_id=settings.worker_id)
-            break
-        except Exception as e:
-            logger.error("Worker error", error=str(e), worker_id=settings.worker_id, exc_info=True)
-            time.sleep(settings.poll_interval_seconds)
+    finally:
+        # Stop worker heartbeat thread on shutdown
+        worker_heartbeat_stop.set()
+        worker_heartbeat_thread.join(timeout=5)
+        logger.info("Worker heartbeat thread stopped", worker_id=settings.worker_id)
 
 
 if __name__ == "__main__":

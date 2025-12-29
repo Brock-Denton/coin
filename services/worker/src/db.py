@@ -10,6 +10,24 @@ logger = structlog.get_logger()
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
 
+def upsert_worker_heartbeat(worker_id: str, meta: dict = None):
+    """Upsert worker heartbeat to worker_heartbeats table.
+    
+    Args:
+        worker_id: Worker instance identifier
+        meta: Optional metadata (version, hostname, last_job_id, etc.)
+    """
+    try:
+        meta_json = meta or {}
+        supabase.rpc('upsert_worker_heartbeat', {
+            'p_worker_id': worker_id,
+            'p_meta': meta_json
+        }).execute()
+        logger.debug("Worker heartbeat updated", worker_id=worker_id)
+    except Exception as e:
+        logger.error("Failed to upsert worker heartbeat", worker_id=worker_id, error=str(e))
+
+
 def claim_next_job(worker_id: str) -> Optional[dict]:
     """Atomically claim the next pending or retryable job.
     
@@ -73,7 +91,11 @@ def lock_job(job_id: str, worker_id: str) -> bool:
 
 
 def update_job_status(job_id: str, status: str, error_message: str = None):
-    """Update job status."""
+    """Update job status.
+    
+    Sets completed_at only for terminal states: 'succeeded' or 'failed'.
+    Does NOT set completed_at for 'retryable' (it's not terminal).
+    """
     update_data = {
         "status": status,
         "updated_at": "now()"
@@ -88,6 +110,8 @@ def update_job_status(job_id: str, status: str, error_message: str = None):
         status = status_map[status]
         update_data["status"] = status
     
+    # Only set completed_at for terminal states (succeeded, failed)
+    # Do NOT set for retryable - it's handled by mark_job_retryable SQL function
     if status in ("succeeded", "failed"):
         update_data["completed_at"] = "now()"
     

@@ -7,6 +7,8 @@ interface BulkActionsToolbarProps {
   selectedCount: number
   onRunPricing: () => void
   onExportCSV: () => void
+  onMarkListed: () => void
+  onMarkSold: () => void
   onClearSelection: () => void
   exporting?: boolean
 }
@@ -15,6 +17,8 @@ export function BulkActionsToolbar({
   selectedCount,
   onRunPricing,
   onExportCSV,
+  onMarkListed,
+  onMarkSold,
   onClearSelection,
   exporting = false,
 }: BulkActionsToolbarProps) {
@@ -36,6 +40,12 @@ export function BulkActionsToolbar({
         >
           <Download className="h-4 w-4 mr-2" />
           {exporting ? 'Exporting...' : 'Export CSV'}
+        </Button>
+        <Button onClick={onMarkListed} variant="outline" size="sm">
+          Mark Listed
+        </Button>
+        <Button onClick={onMarkSold} variant="outline" size="sm">
+          Mark Sold
         </Button>
         <Button onClick={onClearSelection} variant="ghost" size="sm">
           <X className="h-4 w-4 mr-2" />

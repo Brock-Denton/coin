@@ -65,6 +65,42 @@ export function IntakesTable({ intakes }: IntakesTableProps) {
 
   const selectedIntakes = intakes.filter(i => selectedIds.has(i.id))
 
+  const handleMarkListed = async () => {
+    if (selectedIds.size === 0) return
+    
+    try {
+      const { error } = await supabase
+        .from('coin_intakes')
+        .update({ listed_at: new Date().toISOString() })
+        .in('id', Array.from(selectedIds))
+      
+      if (error) throw error
+      
+      alert(`Marked ${selectedIds.size} intake(s) as listed`)
+      window.location.reload()
+    } catch (err: any) {
+      alert(`Error: ${err.message}`)
+    }
+  }
+
+  const handleMarkSold = async () => {
+    if (selectedIds.size === 0) return
+    
+    try {
+      const { error } = await supabase
+        .from('coin_intakes')
+        .update({ sold_at: new Date().toISOString() })
+        .in('id', Array.from(selectedIds))
+      
+      if (error) throw error
+      
+      alert(`Marked ${selectedIds.size} intake(s) as sold`)
+      window.location.reload()
+    } catch (err: any) {
+      alert(`Error: ${err.message}`)
+    }
+  }
+
   const handleExportCSV = async () => {
     setExporting(true)
     try {
@@ -179,6 +215,8 @@ export function IntakesTable({ intakes }: IntakesTableProps) {
           selectedCount={selectedIds.size}
           onRunPricing={() => setBulkPricingOpen(true)}
           onExportCSV={handleExportCSV}
+          onMarkListed={handleMarkListed}
+          onMarkSold={handleMarkSold}
           onClearSelection={clearSelection}
           exporting={exporting}
         />

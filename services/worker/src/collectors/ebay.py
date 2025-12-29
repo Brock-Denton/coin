@@ -81,6 +81,13 @@ class EbayCollector(BaseCollector):
             words = [w for w in title.lower().split() if w not in stop_words and len(w) > 2]
             parts.extend(words[:3])  # Limit to 3 additional keywords
         
+        # Add keywords_include if provided (from attribution)
+        keywords_include = query_params.get('keywords_include', [])
+        if keywords_include and isinstance(keywords_include, list):
+            # Add up to 3 include keywords to query
+            include_words = [k for k in keywords_include[:3] if k and isinstance(k, str) and len(k.strip()) > 0]
+            parts.extend(include_words)
+        
         # Add "US coin" to ensure we get US coins
         if 'US' not in ' '.join(parts).upper():
             parts.insert(0, 'US coin')
@@ -167,19 +174,29 @@ class EbayCollector(BaseCollector):
         if not exclude_keywords:
             return items
         
+        # Ensure exclude keywords are normalized (trim, lowercase)
+        # Keywords should already be normalized by caller, but normalize here for safety
+        exclude_normalized = [str(k).strip().lower() for k in exclude_keywords if k]
+        if not exclude_normalized:
+            return items
+        
         filtered = []
-        exclude_lower = [k.lower() for k in exclude_keywords]
         
         for item in items:
+            # Get text fields to check (primarily title, can extend to other fields if available)
             title = item.get('title', '').lower()
+            text_to_check = title
             
-            # Check if any exclude keyword appears in title
-            should_exclude = any(keyword in title for keyword in exclude_lower)
+            # Check if any exclude keyword appears in text fields (robust filtering)
+            should_exclude = any(keyword in text_to_check for keyword in exclude_normalized)
             
             if not should_exclude:
                 filtered.append(item)
             else:
-                logger.debug("Filtered out listing", title=item.get('title'))
+                matched_keywords = [k for k in exclude_normalized if k in text_to_check]
+                logger.debug("Filtered out listing", 
+                           title=item.get('title'),
+                           matched_keywords=matched_keywords)
         
         return filtered
     
