@@ -126,7 +126,6 @@
     @apply border-border outline-ring/50;
   }
   html {
-    @apply dark;
     background-color: var(--app-bg);
   }
   body {
