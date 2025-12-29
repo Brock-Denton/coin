@@ -110,7 +110,9 @@ export default async function BrowsePage(props: BrowsePageProps) {
         <h1 className="text-4xl font-bold mb-8">Browse Coins</h1>
         
         <div className="mb-8">
-          <BrowseFilters />
+          <Suspense fallback={<div>Loading filters...</div>}>
+            <BrowseFilters />
+          </Suspense>
         </div>
         
         <Suspense fallback={<div>Loading...</div>}>
