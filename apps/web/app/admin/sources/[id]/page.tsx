@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -12,12 +12,10 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
-interface SourceEditPageProps {
-  params: Promise<{ id: string }>
-}
-
-export default function SourceEditPage(props: SourceEditPageProps) {
+export default function SourceEditPage() {
   const router = useRouter()
+  const params = useParams()
+  const sourceId = params.id as string
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -30,17 +28,18 @@ export default function SourceEditPage(props: SourceEditPageProps) {
   })
 
   useEffect(() => {
-    loadSource()
-  }, [])
+    if (sourceId) {
+      loadSource()
+    }
+  }, [sourceId])
 
   const loadSource = async () => {
-    const params = await props.params
     setLoading(true)
     try {
       const { data, error } = await supabase
         .from('sources')
         .select('*')
-        .eq('id', params.id)
+        .eq('id', sourceId)
         .single()
 
       if (error) throw error
