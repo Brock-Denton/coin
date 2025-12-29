@@ -168,3 +168,4 @@ If migration fails:
 3. Check Supabase logs for detailed error messages
 
 
+

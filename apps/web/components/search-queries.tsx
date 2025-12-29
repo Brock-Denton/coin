@@ -1,0 +1,223 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Copy, Check } from 'lucide-react'
+
+interface SearchQuery {
+  id: string
+  query: string
+  source: string
+  url: string
+  found?: boolean
+}
+
+interface SearchQueriesProps {
+  attribution: any
+  onQueriesCompleted?: () => void
+}
+
+export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueriesProps) {
+  const [queries, setQueries] = useState<SearchQuery[]>([])
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [initialized, setInitialized] = useState(false)
+
+  // Generate search queries based on attribution
+  const generateQueries = useCallback(() => {
+    const queries: SearchQuery[] = []
+    
+    // Build base coin description
+    const denominationMap: Record<string, string> = {
+      penny: 'penny',
+      nickel: 'nickel',
+      dime: 'dime',
+      quarter: 'quarter',
+      half_dollar: 'half dollar',
+      dollar: 'dollar'
+    }
+    
+    const denomination = denominationMap[attribution.denomination || ''] || ''
+    const year = attribution.year || ''
+    const mintmark = attribution.mintmark || ''
+    const grade = attribution.grade || ''
+    const series = attribution.series || ''
+    const title = attribution.title || ''
+    
+    // Query 1: PCGS CoinFacts (most authoritative)
+    const pcgsParts = []
+    if (year) pcgsParts.push(year)
+    if (mintmark) pcgsParts.push(mintmark)
+    if (denomination) pcgsParts.push(denomination)
+    if (series) pcgsParts.push(series)
+    const pcgsQuery = pcgsParts.join(' ')
+    queries.push({
+      id: 'pcgs',
+      query: pcgsQuery || title || `${year} ${denomination}`,
+      source: 'PCGS CoinFacts',
+      url: `https://www.pcgs.com/coinfacts/search?q=${encodeURIComponent(pcgsQuery || title || `${year} ${denomination}`)}`
+    })
+    
+    // Query 2: NGC Coin Explorer
+    const ngcQuery = `${year} ${mintmark} ${denomination} ${series}`.trim()
+    queries.push({
+      id: 'ngc',
+      query: ngcQuery || title || `${year} ${denomination}`,
+      source: 'NGC Coin Explorer',
+      url: `https://www.ngccoin.com/coin-explorer/?q=${encodeURIComponent(ngcQuery || title || `${year} ${denomination}`)}`
+    })
+    
+    // Query 3: Heritage Auctions
+    const heritageQuery = `${year} ${mintmark} ${denomination} ${grade}`.trim()
+    queries.push({
+      id: 'heritage',
+      query: heritageQuery || title || `${year} ${denomination}`,
+      source: 'Heritage Auctions',
+      url: `https://www.ha.com/c/search-results.zx?N=790+231+4294949385&Ntt=${encodeURIComponent(heritageQuery || title || `${year} ${denomination}`)}`
+    })
+    
+    // Query 4: Google search for price guide
+    const googleQuery = `${year} ${mintmark} ${denomination} ${grade} price guide`.trim()
+    queries.push({
+      id: 'google',
+      query: googleQuery || title || `${year} ${denomination} price guide`,
+      source: 'Google Search',
+      url: `https://www.google.com/search?q=${encodeURIComponent(googleQuery || title || `${year} ${denomination} price guide`)}`
+    })
+    
+    // Query 5: NumisMedia or CoinWorld
+    const numisQuery = `${year} ${denomination} ${series} ${grade}`.trim()
+    const numisFullQuery = numisQuery ? `${numisQuery} numismedia OR coinworld` : (title || `${year} ${denomination}`)
+    queries.push({
+      id: 'numis',
+      query: numisFullQuery,
+      source: 'NumisMedia / CoinWorld',
+      url: `https://www.google.com/search?q=${encodeURIComponent(numisFullQuery)}`
+    })
+    
+    setQueries(queries)
+  }, [attribution])
+
+  const handleCopy = async (queryId: string, text: string) => {
+    await navigator.clipboard.writeText(text)
+    setCopiedId(queryId)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
+
+  const toggleFound = (queryId: string) => {
+    setQueries(queries.map(q => 
+      q.id === queryId ? { ...q, found: q.found === undefined ? true : !q.found } : q
+    ))
+  }
+
+  // Generate queries on mount if attribution has data
+  useEffect(() => {
+    if (!initialized && attribution && (attribution.year || attribution.denomination || attribution.title)) {
+      generateQueries()
+      setInitialized(true)
+    }
+  }, [attribution, initialized, generateQueries])
+
+  const allQueriesCompleted = queries.length > 0 && queries.every(q => q.found !== undefined)
+  const foundCount = queries.filter(q => q.found === true).length
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>Manual Search (Optional)</CardTitle>
+            <CardDescription>
+              Copy and paste these searches into reputable coin pricing sources. Mark each as found or not found.
+            </CardDescription>
+          </div>
+          <Button onClick={generateQueries} variant="outline" size="sm">
+            Regenerate Queries
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {queries.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <p>Click &quot;Regenerate Queries&quot; to generate search queries based on your attribution.</p>
+          </div>
+        ) : (
+          <>
+            {queries.map((query) => (
+              <div key={query.id} className="border rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{query.source}</Badge>
+                    {query.found !== undefined && (
+                      <Badge variant={query.found ? 'default' : 'secondary'}>
+                        {query.found ? 'Found' : 'Not Found'}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCopy(query.id, query.query)}
+                    >
+                      {copiedId === query.id ? (
+                        <>
+                          <Check className="h-4 w-4 mr-1" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-4 w-4 mr-1" />
+                          Copy Query
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => window.open(query.url, '_blank')}
+                    >
+                      Open Search
+                    </Button>
+                  </div>
+                </div>
+                <Input
+                  value={query.query}
+                  readOnly
+                  className="font-mono text-sm"
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={query.found === true ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => toggleFound(query.id)}
+                  >
+                    {query.found === true ? '✓ Found' : 'Mark as Found'}
+                  </Button>
+                  <Button
+                    variant={query.found === false ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => toggleFound(query.id)}
+                  >
+                    {query.found === false ? '✗ Not Found' : 'Mark as Not Found'}
+                  </Button>
+                </div>
+              </div>
+            ))}
+            
+            {allQueriesCompleted && (
+              <div className="mt-4 p-4 bg-muted rounded-lg">
+                <p className="text-sm">
+                  Completed: {foundCount} of {queries.length} searches found results.
+                </p>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+

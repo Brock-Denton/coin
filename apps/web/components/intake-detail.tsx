@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { SearchQueries } from '@/components/search-queries'
+import { JobStatus } from '@/components/job-status'
 
 interface IntakeDetailProps {
   intake: any
@@ -276,6 +278,9 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         </CardContent>
       </Card>
       
+      {/* Search Queries (Optional) */}
+      <SearchQueries attribution={attribution} />
+      
       {/* Pricing */}
       <Card>
         <CardHeader>
@@ -290,6 +295,9 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Job Status */}
+          <JobStatus intakeId={intake.id} jobs={jobs} onRefresh={() => router.refresh()} />
+          
           {valuation && (
             <div className="p-4 bg-muted rounded-lg">
               <h3 className="font-semibold mb-2">Valuation</h3>
@@ -313,42 +321,48 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
           
           <div>
             <h3 className="font-semibold mb-2">Price Points ({pricePoints.length})</h3>
-            <div className="border rounded-lg overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Price</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Listing</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pricePoints.map((pp: any) => (
-                    <TableRow key={pp.id}>
-                      <TableCell>{pp.sources?.name || 'Unknown'}</TableCell>
-                      <TableCell>${(pp.price_cents / 100).toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Badge variant={pp.price_type === 'sold' ? 'default' : 'secondary'}>
-                          {pp.price_type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {pp.listing_date ? new Date(pp.listing_date).toLocaleDateString() : 'N/A'}
-                      </TableCell>
-                      <TableCell>
-                        {pp.listing_url && (
-                          <a href={pp.listing_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                            View
-                          </a>
-                        )}
-                      </TableCell>
+            {pricePoints.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground border rounded-lg">
+                <p>No price points collected yet. Run pricing jobs to collect data.</p>
+              </div>
+            ) : (
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Price</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Listing</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {pricePoints.map((pp: any) => (
+                      <TableRow key={pp.id}>
+                        <TableCell>{pp.sources?.name || 'Unknown'}</TableCell>
+                        <TableCell>${(pp.price_cents / 100).toFixed(2)}</TableCell>
+                        <TableCell>
+                          <Badge variant={pp.price_type === 'sold' ? 'default' : 'secondary'}>
+                            {pp.price_type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {pp.listing_date ? new Date(pp.listing_date).toLocaleDateString() : 'N/A'}
+                        </TableCell>
+                        <TableCell>
+                          {pp.listing_url && (
+                            <a href={pp.listing_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                              View
+                            </a>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

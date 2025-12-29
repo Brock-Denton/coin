@@ -242,3 +242,4 @@ async headers() {
 - Environment variables: Export from Vercel (Settings > Environment Variables)
 
 
+
