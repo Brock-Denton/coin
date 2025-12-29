@@ -8,7 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 export function BrowseFilters() {
   const router = useRouter()
-  const searchParams = useSearchParams()
+  let searchParams
+  try {
+    searchParams = useSearchParams()
+  } catch (error) {
+    console.error('Error getting search params:', error)
+    searchParams = null
+  }
   
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -30,11 +36,19 @@ export function BrowseFilters() {
     router.push(`/browse?${params.toString()}`)
   }
   
+  const getParam = (key: string) => {
+    try {
+      return searchParams?.get(key) || ''
+    } catch {
+      return ''
+    }
+  }
+  
   return (
     <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
       <div>
         <Label htmlFor="denomination">Denomination</Label>
-        <Select name="denomination" defaultValue={searchParams.get('denomination') || ''}>
+        <Select name="denomination" defaultValue={getParam('denomination')}>
           <SelectTrigger id="denomination">
             <SelectValue placeholder="All" />
           </SelectTrigger>
@@ -57,7 +71,7 @@ export function BrowseFilters() {
           name="year_min" 
           type="number" 
           placeholder="1800" 
-          defaultValue={searchParams.get('year_min') || ''}
+          defaultValue={getParam('year_min')}
         />
       </div>
       
@@ -68,7 +82,7 @@ export function BrowseFilters() {
           name="year_max" 
           type="number" 
           placeholder="2024" 
-          defaultValue={searchParams.get('year_max') || ''}
+          defaultValue={getParam('year_max')}
         />
       </div>
       
@@ -79,7 +93,7 @@ export function BrowseFilters() {
           name="price_min" 
           type="number" 
           placeholder="0" 
-          defaultValue={searchParams.get('price_min') || ''}
+          defaultValue={getParam('price_min')}
         />
       </div>
       
@@ -90,7 +104,7 @@ export function BrowseFilters() {
           name="price_max" 
           type="number" 
           placeholder="10000" 
-          defaultValue={searchParams.get('price_max') || ''}
+          defaultValue={getParam('price_max')}
         />
       </div>
       
