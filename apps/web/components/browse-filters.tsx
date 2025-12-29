@@ -8,13 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 export function BrowseFilters() {
   const router = useRouter()
-  let searchParams
-  try {
-    searchParams = useSearchParams()
-  } catch (error) {
-    console.error('Error getting search params:', error)
-    searchParams = null
-  }
+  const searchParams = useSearchParams()
   
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -38,7 +32,7 @@ export function BrowseFilters() {
   
   const getParam = (key: string) => {
     try {
-      return searchParams?.get(key) || ''
+      return searchParams.get(key) || ''
     } catch {
       return ''
     }
