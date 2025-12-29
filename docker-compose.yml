@@ -3,17 +3,19 @@ version: '3.8'
 services:
   worker:
     build:
-      context: ../services/worker
+      context: ./services/worker
       dockerfile: Dockerfile
     container_name: coin_worker
     restart: unless-stopped
     env_file:
-      - ../services/worker/.env
+      - ./services/worker/.env
     environment:
       - PYTHONUNBUFFERED=1
     volumes:
-      # Optional: mount logs or cache if needed
-      - worker_data:/app/data
+      # Cache directory for SQLite cache database (persists across restarts)
+      - worker_cache:/app/cache
+      # Optional: mount logs if needed
+      - worker_logs:/app/logs
     networks:
       - coin_network
 
@@ -34,6 +36,5 @@ networks:
     driver: bridge
 
 volumes:
-  worker_data:
-
-
+  worker_cache:
+  worker_logs:

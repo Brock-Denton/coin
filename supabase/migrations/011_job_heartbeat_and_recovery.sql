@@ -23,8 +23,7 @@ CREATE INDEX IF NOT EXISTS idx_scrape_jobs_heartbeat_at ON scrape_jobs(heartbeat
 -- Update claim_next_pending_job function to use heartbeat_at and JOB_LOCK_TIMEOUT_SECONDS
 CREATE OR REPLACE FUNCTION claim_next_pending_job(
   p_worker_id TEXT,
-  p_lock_timeout_seconds INTEGER DEFAULT 300,
-  p_max_age_minutes INTEGER DEFAULT 30
+  p_lock_timeout_seconds INTEGER DEFAULT 300
 )
 RETURNS TABLE (
   id UUID,

@@ -55,7 +55,7 @@ def get_collector(source: dict):
     adapter_type = source.get('adapter_type')
     config = source.get('config', {}) or {}
     
-        if adapter_type == 'ebay_api':
+    if adapter_type == 'ebay_api':
         # Get eBay credentials from config or environment
         app_id = config.get('app_id') or settings.ebay_app_id
         cert_id = config.get('cert_id') or settings.ebay_cert_id

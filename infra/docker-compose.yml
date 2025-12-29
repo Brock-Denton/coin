@@ -1,43 +1,13 @@
-version: '3.8'
+# This file is deprecated. Use the canonical docker-compose.yml at the repository root.
+# 
+# To use docker-compose from repo root:
+#   docker-compose up -d
+# 
+# This file is kept for reference only. The canonical compose file is:
+#   ../docker-compose.yml
 
-services:
-  worker:
-    build:
-      context: ../services/worker
-      dockerfile: Dockerfile
-    container_name: coin_worker
-    restart: unless-stopped
-    env_file:
-      - ../services/worker/.env
-    environment:
-      - PYTHONUNBUFFERED=1
-    volumes:
-      # Cache directory for SQLite cache database
-      - worker_cache:/app/cache
-      # Optional: mount logs if needed
-      - worker_logs:/app/logs
-    networks:
-      - coin_network
-
-  # Optional: Selenium container (disabled by default)
-  # Uncomment if you need Selenium-based collectors
-  # selenium:
-  #   image: selenium/standalone-chrome:latest
-  #   container_name: coin_selenium
-  #   restart: unless-stopped
-  #   shm_size: 2gb
-  #   networks:
-  #     - coin_network
-  #   ports:
-  #     - "4444:4444"
-
-networks:
-  coin_network:
-    driver: bridge
-
-volumes:
-  worker_cache:
-  worker_logs:
+# To use this file, run from infra/ directory:
+#   docker-compose -f ../docker-compose.yml up -d
 
 
 

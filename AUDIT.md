@@ -9,9 +9,11 @@ Jobs progress through the following states:
 ```
 pending → running → succeeded
               ↓
-           retryable → running (after backoff)
+           retryable → running (after backoff expires)
               ↓
             failed (terminal)
+            
+stuck/running → pending (via reclaim after heartbeat timeout)
 ```
 
 ### States
@@ -28,8 +30,8 @@ pending → running → succeeded
 2. **running → succeeded**: Job completes successfully
 3. **running → failed**: Permanent error (not retryable)
 4. **running → retryable**: Transient error (timeout, connection, rate limit, etc.)
-5. **retryable → running**: Job retried after backoff period expires
-6. **running → pending**: Stuck job reclaimed (no heartbeat)
+5. **retryable → running**: Job retried after `next_retry_at` timestamp expires (checked in claim function)
+6. **running → pending**: Stuck job reclaimed (no heartbeat within `JOB_LOCK_TIMEOUT_SECONDS`)
 
 ## Recovery Logic
 

@@ -1,35 +1,29 @@
 # Infrastructure Setup
 
-This directory contains Docker Compose configuration for running the worker service.
+**Note**: The canonical `docker-compose.yml` is now at the repository root. This directory's compose file is deprecated.
 
-## Prerequisites
+## Using Docker Compose
 
-- Docker Desktop for Windows
-- Supabase project with migrations applied
-- Worker environment variables configured
-
-## Quick Start
-
-From the repository root:
+Run all commands from the **repository root**:
 
 ```powershell
 # Build the worker container
-docker-compose -f infra/docker-compose.yml build
+docker-compose build
 
 # Start the worker (detached)
-docker-compose -f infra/docker-compose.yml up -d
+docker-compose up -d
 
 # View logs (follow mode)
-docker-compose -f infra/docker-compose.yml logs -f worker
+docker-compose logs -f worker
 
 # Stop the worker
-docker-compose -f infra/docker-compose.yml stop
+docker-compose stop
 
 # Stop and remove containers (keeps volumes)
-docker-compose -f infra/docker-compose.yml down
+docker-compose down
 
 # Stop and remove containers + volumes (clean reset)
-docker-compose -f infra/docker-compose.yml down -v
+docker-compose down -v
 ```
 
 ## Services
@@ -48,60 +42,60 @@ The Python worker service that processes scrape jobs from Supabase.
 
 ## Windows Commands Reference
 
-All commands should be run from the repository root directory.
+All commands should be run from the **repository root** directory.
 
 ### Build
 
 ```powershell
-docker-compose -f infra/docker-compose.yml build
+docker-compose build
 ```
 
 ### Start
 
 ```powershell
 # Start in background
-docker-compose -f infra/docker-compose.yml up -d
+docker-compose up -d
 
 # Start and view logs
-docker-compose -f infra/docker-compose.yml up
+docker-compose up
 ```
 
 ### Logs
 
 ```powershell
 # View logs
-docker-compose -f infra/docker-compose.yml logs worker
+docker-compose logs worker
 
 # Follow logs (live)
-docker-compose -f infra/docker-compose.yml logs -f worker
+docker-compose logs -f worker
 
 # Last 100 lines
-docker-compose -f infra/docker-compose.yml logs --tail=100 worker
+docker-compose logs --tail=100 worker
 ```
 
 ### Stop
 
 ```powershell
 # Stop (keeps containers)
-docker-compose -f infra/docker-compose.yml stop
+docker-compose stop
 
 # Stop and remove (keeps volumes)
-docker-compose -f infra/docker-compose.yml down
+docker-compose down
 
 # Stop, remove, and delete volumes (clean reset)
-docker-compose -f infra/docker-compose.yml down -v
+docker-compose down -v
 ```
 
 ### Restart
 
 ```powershell
-docker-compose -f infra/docker-compose.yml restart worker
+docker-compose restart worker
 ```
 
 ### Shell Access
 
 ```powershell
-docker-compose -f infra/docker-compose.yml exec worker /bin/sh
+docker-compose exec worker /bin/sh
 ```
 
 ## Troubleshooting
@@ -132,7 +126,8 @@ ports:
 
 ## Notes
 
-- All paths in `docker-compose.yml` are relative to the repository root
-- Volumes persist data across container restarts
+- The canonical `docker-compose.yml` is at the repository root
+- All paths in the compose file are relative to the repository root
+- Volumes persist data across container restarts (`worker_cache`, `worker_logs`)
 - Use `down -v` to completely reset (deletes volumes)
 

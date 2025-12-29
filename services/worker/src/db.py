@@ -10,7 +10,7 @@ logger = structlog.get_logger()
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
 
-def claim_next_job(worker_id: str, max_age_minutes: int = 30) -> Optional[dict]:
+def claim_next_job(worker_id: str) -> Optional[dict]:
     """Atomically claim the next pending or retryable job.
     
     Uses the database function for atomic job acquisition to prevent
@@ -18,7 +18,6 @@ def claim_next_job(worker_id: str, max_age_minutes: int = 30) -> Optional[dict]:
     
     Args:
         worker_id: Worker instance identifier
-        max_age_minutes: Maximum age in minutes for jobs to claim (default 30)
         
     Returns:
         Job dictionary if claimed, None otherwise
@@ -26,8 +25,7 @@ def claim_next_job(worker_id: str, max_age_minutes: int = 30) -> Optional[dict]:
     try:
         result = supabase.rpc('claim_next_pending_job', {
             'p_worker_id': worker_id,
-            'p_lock_timeout_seconds': settings.job_lock_timeout_seconds,
-            'p_max_age_minutes': max_age_minutes
+            'p_lock_timeout_seconds': settings.job_lock_timeout_seconds
         }).execute()
         
         if result.data and len(result.data) > 0:
@@ -139,11 +137,12 @@ def log_job_event(job_id: str, level: str, message: str, metadata: dict = None):
 
 
 def insert_price_points(price_points: list):
-    """Insert or update price points into the database (UPSERT).
+    """Insert or update price points into the database (atomic UPSERT).
     
-    Uses ON CONFLICT to update existing rows if they have the same
-    (intake_id, source_id, dedupe_key), keeping the version with
-    higher match_strength or more complete fields.
+    Uses PostgreSQL function with ON CONFLICT to atomically upsert rows
+    based on (intake_id, source_id, dedupe_key) unique constraint.
+    Updates existing rows if new version has higher match_strength or
+    more complete fields (external_id, raw_payload).
     
     Args:
         price_points: List of price point dictionaries
@@ -155,57 +154,47 @@ def insert_price_points(price_points: list):
     updated_count = 0
     
     try:
-        # Process price points one by one or in batches
-        # Supabase Python client doesn't support ON CONFLICT directly,
-        # so we'll use upsert which handles conflicts
         for pp in price_points:
             try:
-                # Try to find existing price point
-                existing = supabase.table("price_points") \
-                    .select("id, match_strength") \
-                    .eq("intake_id", pp.get("intake_id")) \
-                    .eq("source_id", pp.get("source_id")) \
-                    .eq("dedupe_key", pp.get("dedupe_key")) \
-                    .execute()
+                # Use PostgreSQL function for atomic upsert
+                result = supabase.rpc('upsert_price_point', {
+                    'p_intake_id': pp.get('intake_id'),
+                    'p_source_id': pp.get('source_id'),
+                    'p_dedupe_key': pp.get('dedupe_key'),
+                    'p_job_id': pp.get('job_id'),
+                    'p_price_cents': pp.get('price_cents'),
+                    'p_price_type': pp.get('price_type'),
+                    'p_raw_payload': pp.get('raw_payload'),
+                    'p_listing_url': pp.get('listing_url'),
+                    'p_listing_title': pp.get('listing_title'),
+                    'p_listing_date': pp.get('listing_date'),
+                    'p_observed_at': pp.get('observed_at'),
+                    'p_match_strength': float(pp.get('match_strength', 1.0)),
+                    'p_external_id': pp.get('external_id'),
+                    'p_filtered_out': pp.get('filtered_out', False)
+                }).execute()
                 
-                if existing.data and len(existing.data) > 0:
-                    # Existing row found - update if new version is better
-                    existing_pp = existing.data[0]
-                    existing_match_strength = existing_pp.get('match_strength', 0.0)
-                    new_match_strength = pp.get('match_strength', 0.0)
-                    
-                    # Update if new match_strength is higher
-                    if new_match_strength > existing_match_strength:
-                        supabase.table("price_points") \
-                            .update({
-                                'price_cents': pp.get('price_cents'),
-                                'price_type': pp.get('price_type'),
-                                'listing_url': pp.get('listing_url'),
-                                'listing_title': pp.get('listing_title'),
-                                'listing_date': pp.get('listing_date'),
-                                'observed_at': pp.get('observed_at'),
-                                'match_strength': pp.get('match_strength'),
-                                'raw_payload': pp.get('raw_payload'),
-                                'external_id': pp.get('external_id'),
-                                'filtered_out': pp.get('filtered_out', False)
-                            }) \
-                            .eq("id", existing_pp['id']) \
-                            .execute()
-                        updated_count += 1
-                else:
-                    # Insert new row
-                    supabase.table("price_points") \
-                        .insert(pp) \
-                        .execute()
+                if result.data:
+                    # Check if this was an insert or update by checking if row existed before
+                    # Since we can't easily tell, we'll assume it's an update if we get a result
+                    # In practice, both inserts and updates return the id
                     inserted_count += 1
             except Exception as e:
-                logger.error("Failed to upsert price point", error=str(e), price_point_id=pp.get('id'))
+                # If it's a unique constraint violation that wasn't handled, log and continue
+                error_str = str(e)
+                if 'unique constraint' in error_str.lower() or 'duplicate key' in error_str.lower():
+                    # This shouldn't happen with the function, but handle gracefully
+                    logger.warning("Price point conflict (should be handled by function)", 
+                                 error=error_str, 
+                                 dedupe_key=pp.get('dedupe_key'))
+                    updated_count += 1
+                else:
+                    logger.error("Failed to upsert price point", error=error_str, price_point_id=pp.get('id'))
                 continue
         
         logger.info("Upserted price points", 
-                   inserted=inserted_count, 
-                   updated=updated_count, 
-                   total=len(price_points))
+                   total=len(price_points),
+                   processed=inserted_count + updated_count)
     except Exception as e:
         logger.error("Failed to insert price points", error=str(e))
 
@@ -380,26 +369,35 @@ def check_source_available(source_id: str) -> bool:
 
 
 def upsert_valuation(intake_id: str, valuation_data: dict):
-    """Create or update a valuation."""
+    """Create or update a valuation (atomic UPSERT).
+    
+    Uses PostgreSQL function with ON CONFLICT to atomically upsert
+    based on unique constraint on intake_id.
+    
+    Args:
+        intake_id: Intake ID
+        valuation_data: Valuation data dictionary
+    """
     try:
-        # Check if valuation exists
-        existing = supabase.table("valuations") \
-            .select("id") \
-            .eq("intake_id", intake_id) \
-            .execute()
-        
-        if existing.data:
-            # Update
-            supabase.table("valuations") \
-                .update(valuation_data) \
-                .eq("intake_id", intake_id) \
-                .execute()
-        else:
-            # Insert
-            valuation_data["intake_id"] = intake_id
-            supabase.table("valuations") \
-                .insert(valuation_data) \
-                .execute()
+        # Use PostgreSQL function for atomic upsert
+        result = supabase.rpc('upsert_valuation', {
+            'p_intake_id': intake_id,
+            'p_price_cents_p10': valuation_data.get('price_cents_p10'),
+            'p_price_cents_p20': valuation_data.get('price_cents_p20'),
+            'p_price_cents_p40': valuation_data.get('price_cents_p40'),
+            'p_price_cents_median': valuation_data.get('price_cents_median'),
+            'p_price_cents_p60': valuation_data.get('price_cents_p60'),
+            'p_price_cents_p80': valuation_data.get('price_cents_p80'),
+            'p_price_cents_p90': valuation_data.get('price_cents_p90'),
+            'p_price_cents_mean': valuation_data.get('price_cents_mean'),
+            'p_confidence_score': valuation_data.get('confidence_score'),
+            'p_explanation': valuation_data.get('explanation'),
+            'p_comp_count': valuation_data.get('comp_count', 0),
+            'p_comp_sources_count': valuation_data.get('comp_sources_count', 0),
+            'p_sold_count': valuation_data.get('sold_count', 0),
+            'p_ask_count': valuation_data.get('ask_count', 0),
+            'p_metadata': valuation_data.get('metadata', {})
+        }).execute()
         
         logger.info("Upserted valuation", intake_id=intake_id)
     except Exception as e:
