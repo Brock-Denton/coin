@@ -6,6 +6,9 @@ import { BrowseFiltersWrapper } from '@/components/browse-filters-wrapper'
 import Link from 'next/link'
 import { Suspense } from 'react'
 
+// Force dynamic rendering since we use useSearchParams
+export const dynamic = 'force-dynamic'
+
 interface BrowsePageProps {
   searchParams: Promise<{
     denomination?: string
