@@ -1,10 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Nav } from '@/components/nav'
+import { BrowseFilters } from '@/components/browse-filters'
 import Link from 'next/link'
 import { Suspense } from 'react'
 
@@ -112,49 +110,7 @@ export default async function BrowsePage(props: BrowsePageProps) {
         <h1 className="text-4xl font-bold mb-8">Browse Coins</h1>
         
         <div className="mb-8">
-          <form className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <Label htmlFor="denomination">Denomination</Label>
-              <Select name="denomination" defaultValue="">
-                <SelectTrigger id="denomination">
-                  <SelectValue placeholder="All" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">All</SelectItem>
-                  <SelectItem value="penny">Penny</SelectItem>
-                  <SelectItem value="nickel">Nickel</SelectItem>
-                  <SelectItem value="dime">Dime</SelectItem>
-                  <SelectItem value="quarter">Quarter</SelectItem>
-                  <SelectItem value="half_dollar">Half Dollar</SelectItem>
-                  <SelectItem value="dollar">Dollar</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <div>
-              <Label htmlFor="year_min">Year Min</Label>
-              <Input id="year_min" name="year_min" type="number" placeholder="1800" />
-            </div>
-            
-            <div>
-              <Label htmlFor="year_max">Year Max</Label>
-              <Input id="year_max" name="year_max" type="number" placeholder="2024" />
-            </div>
-            
-            <div>
-              <Label htmlFor="price_min">Price Min ($)</Label>
-              <Input id="price_min" name="price_min" type="number" placeholder="0" />
-            </div>
-            
-            <div>
-              <Label htmlFor="price_max">Price Max ($)</Label>
-              <Input id="price_max" name="price_max" type="number" placeholder="10000" />
-            </div>
-            
-            <div className="md:col-span-4">
-              <Button type="submit">Apply Filters</Button>
-            </div>
-          </form>
+          <BrowseFilters />
         </div>
         
         <Suspense fallback={<div>Loading...</div>}>
