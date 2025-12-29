@@ -21,7 +21,7 @@ export function BrowseFilters() {
     const priceMin = formData.get('price_min')
     const priceMax = formData.get('price_max')
     
-    if (denomination) params.set('denomination', denomination as string)
+    if (denomination && denomination !== 'all') params.set('denomination', denomination as string)
     if (yearMin) params.set('year_min', yearMin as string)
     if (yearMax) params.set('year_max', yearMax as string)
     if (priceMin) params.set('price_min', priceMin as string)
@@ -32,9 +32,9 @@ export function BrowseFilters() {
   
   const getParam = (key: string) => {
     try {
-      return searchParams.get(key) || ''
+      return searchParams.get(key) || 'all'
     } catch {
-      return ''
+      return 'all'
     }
   }
   
@@ -42,12 +42,12 @@ export function BrowseFilters() {
     <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4">
       <div>
         <Label htmlFor="denomination">Denomination</Label>
-        <Select name="denomination" defaultValue={getParam('denomination')}>
+        <Select name="denomination" defaultValue={getParam('denomination') || 'all'}>
           <SelectTrigger id="denomination">
             <SelectValue placeholder="All" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">All</SelectItem>
+            <SelectItem value="all">All</SelectItem>
             <SelectItem value="penny">Penny</SelectItem>
             <SelectItem value="nickel">Nickel</SelectItem>
             <SelectItem value="dime">Dime</SelectItem>
