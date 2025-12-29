@@ -2,12 +2,14 @@
 import time
 import logging
 import sys
+import threading
+from datetime import datetime
 import structlog
 from src.config import settings
 from src.db import (
     claim_next_job, update_job_status, mark_job_retryable, log_job_event,
     insert_price_points, get_source, get_source_rules, get_attribution,
-    upsert_valuation, supabase
+    upsert_valuation, update_job_heartbeat, reclaim_stuck_jobs, supabase
 )
 from src.collectors.ebay import EbayCollector
 from src.valuation import ValuationEngine
@@ -53,18 +55,26 @@ def get_collector(source: dict):
     adapter_type = source.get('adapter_type')
     config = source.get('config', {}) or {}
     
-    if adapter_type == 'ebay_api':
+        if adapter_type == 'ebay_api':
         # Get eBay credentials from config or environment
         app_id = config.get('app_id') or settings.ebay_app_id
         cert_id = config.get('cert_id') or settings.ebay_cert_id
         dev_id = config.get('dev_id') or settings.ebay_dev_id
         sandbox = config.get('sandbox', False) or settings.ebay_sandbox
+        rate_limit = source.get('rate_limit_per_minute', 60)
         
         if not app_id:
             logger.error("eBay App ID not found", source_id=source['id'])
             return None
         
-        return EbayCollector(app_id=app_id, cert_id=cert_id, dev_id=dev_id, sandbox=sandbox)
+        return EbayCollector(
+            app_id=app_id, 
+            cert_id=cert_id, 
+            dev_id=dev_id, 
+            sandbox=sandbox,
+            source_id=source['id'],
+            rate_limit_per_minute=rate_limit
+        )
     
     elif adapter_type == 'manual':
         logger.warning("Manual collector not implemented", source_id=source['id'])
@@ -90,7 +100,17 @@ def process_job(job: dict):
     source_id = job['source_id']
     query_params = job.get('query_params', {})
     
-    logger.info("Processing job", job_id=job_id, intake_id=intake_id, source_id=source_id)
+    start_time = datetime.now()
+    logger.info("Processing job", job_id=job_id, intake_id=intake_id, source_id=source_id, worker_id=settings.worker_id)
+    
+    # Start heartbeat thread
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = threading.Thread(
+        target=_heartbeat_loop,
+        args=(job_id, heartbeat_stop),
+        daemon=True
+    )
+    heartbeat_thread.start()
     
     try:
         # Get source configuration
@@ -173,19 +193,46 @@ def process_job(job: dict):
         
         # Upsert valuation
         upsert_valuation(intake_id, valuation)
+        logger.info("Valuation upserted",
+                   job_id=job_id,
+                   intake_id=intake_id,
+                   confidence_score=valuation['confidence_score'],
+                   comp_count=valuation['comp_count'])
         
         log_job_event(job_id, 'info', 'Valuation computed', {
             'confidence_score': valuation['confidence_score'],
             'comp_count': valuation['comp_count']
         })
         
+        # Stop heartbeat
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=1)
+        
         # Mark job as succeeded
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         update_job_status(job_id, 'succeeded', None)
-        logger.info("Job succeeded", job_id=job_id)
+        logger.info("Job succeeded", 
+                   job_id=job_id, 
+                   intake_id=intake_id, 
+                   source_id=source_id,
+                   duration_ms=duration_ms,
+                   worker_id=settings.worker_id)
         
     except Exception as e:
+        # Stop heartbeat
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=1)
+        
         error_msg = str(e)
-        logger.error("Job failed", job_id=job_id, error=error_msg, exc_info=True)
+        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        logger.error("Job failed", 
+                    job_id=job_id, 
+                    intake_id=intake_id,
+                    source_id=source_id,
+                    error=error_msg, 
+                    duration_ms=duration_ms,
+                    worker_id=settings.worker_id,
+                    exc_info=True)
         log_job_event(job_id, 'error', f'Job failed: {error_msg}')
         
         # Check if error is retryable (transient errors)
@@ -201,12 +248,42 @@ def process_job(job: dict):
             update_job_status(job_id, 'failed', error_msg)
 
 
+def _heartbeat_loop(job_id: str, stop_event: threading.Event):
+    """Background thread to update job heartbeat.
+    
+    Args:
+        job_id: Job ID to update heartbeat for
+        stop_event: Event to signal thread to stop
+    """
+    heartbeat_interval = 20  # Update heartbeat every 20 seconds
+    while not stop_event.is_set():
+        try:
+            update_job_heartbeat(job_id)
+        except Exception as e:
+            logger.error("Failed to update heartbeat", job_id=job_id, error=str(e))
+        
+        # Wait for interval or stop signal
+        stop_event.wait(heartbeat_interval)
+
+
 def run_worker():
     """Main worker loop with atomic job claiming."""
     logger.info("Worker started", worker_id=settings.worker_id)
     
+    # Track last reclaim check time
+    last_reclaim_check = datetime.now()
+    reclaim_check_interval = 60  # Check for stuck jobs every 60 seconds
+    
     while True:
         try:
+            # Periodically check for stuck jobs
+            now = datetime.now()
+            if (now - last_reclaim_check).total_seconds() >= reclaim_check_interval:
+                reclaimed = reclaim_stuck_jobs()
+                if reclaimed > 0:
+                    logger.info("Reclaimed stuck jobs", count=reclaimed, worker_id=settings.worker_id)
+                last_reclaim_check = now
+            
             # Atomically claim the next available job
             job = claim_next_job(settings.worker_id)
             
@@ -220,10 +297,10 @@ def run_worker():
                 time.sleep(settings.poll_interval_seconds)
             
         except KeyboardInterrupt:
-            logger.info("Worker stopped by user")
+            logger.info("Worker stopped by user", worker_id=settings.worker_id)
             break
         except Exception as e:
-            logger.error("Worker error", error=str(e), exc_info=True)
+            logger.error("Worker error", error=str(e), worker_id=settings.worker_id, exc_info=True)
             time.sleep(settings.poll_interval_seconds)
 
 

@@ -255,6 +255,159 @@ WHERE intake_id = 'intake-id-here'
 3. Multiple sources improve confidence
 4. Check source reputation weights
 
+## Smoke Test
+
+The smoke test verifies the worker can claim jobs, send heartbeats, process them, and handle deduplication correctly.
+
+### 1. Insert a Pending Job
+
+```sql
+-- Create a test intake
+INSERT INTO coin_intakes (intake_number, status)
+VALUES ('TEST-001', 'pending')
+RETURNING id;
+
+-- Create attribution
+INSERT INTO attributions (intake_id, year, denomination, mintmark, series, title)
+VALUES (
+  '<intake_id_from_above>',
+  1921,
+  'dollar',
+  'S',
+  'Morgan Dollar',
+  '1921 S Morgan Dollar'
+);
+
+-- Create a pending job
+INSERT INTO scrape_jobs (intake_id, source_id, query_params, status)
+VALUES (
+  '<intake_id_from_above>',
+  (SELECT id FROM sources WHERE enabled = true LIMIT 1),
+  '{}'::jsonb,
+  'pending'
+);
+```
+
+### 2. Confirm Worker Claims and Heartbeats
+
+Start the worker and check logs:
+
+```powershell
+docker-compose -f infra/docker-compose.yml logs -f worker
+```
+
+You should see:
+- "Claimed job" log entry
+- Periodic "Updated job heartbeat" messages (every 20 seconds)
+- Job processing logs
+
+Check database:
+
+```sql
+-- Check job status and heartbeat
+SELECT 
+  id,
+  status,
+  locked_by,
+  heartbeat_at,
+  NOW() - heartbeat_at as time_since_heartbeat
+FROM scrape_jobs
+WHERE status = 'running'
+ORDER BY created_at DESC
+LIMIT 1;
+```
+
+### 3. Verify Job Completes
+
+```sql
+-- Check job status
+SELECT 
+  id,
+  status,
+  completed_at,
+  error_message
+FROM scrape_jobs
+WHERE status IN ('succeeded', 'failed')
+ORDER BY completed_at DESC
+LIMIT 1;
+
+-- Check price points were created
+SELECT COUNT(*) as price_point_count
+FROM price_points
+WHERE intake_id = '<intake_id_from_above>';
+
+-- Check valuation was created
+SELECT 
+  confidence_score,
+  comp_count,
+  price_cents_median
+FROM valuations
+WHERE intake_id = '<intake_id_from_above>';
+```
+
+### 4. Rerun Job and Verify No Duplicates
+
+```sql
+-- Create another job for the same intake
+INSERT INTO scrape_jobs (intake_id, source_id, query_params, status)
+VALUES (
+  '<intake_id_from_above>',
+  (SELECT id FROM sources WHERE enabled = true LIMIT 1),
+  '{}'::jsonb,
+  'pending'
+);
+```
+
+Wait for job to complete, then verify:
+
+```sql
+-- Count price points (should be same as before, no duplicates)
+SELECT COUNT(*) as price_point_count
+FROM price_points
+WHERE intake_id = '<intake_id_from_above>';
+
+-- Verify no duplicates (should return 0 rows)
+SELECT 
+  intake_id,
+  source_id,
+  dedupe_key,
+  COUNT(*) as count
+FROM price_points
+WHERE intake_id = '<intake_id_from_above>'
+GROUP BY intake_id, source_id, dedupe_key
+HAVING COUNT(*) > 1;
+```
+
+### 5. Simulate Dead Worker and Verify Reclaim
+
+```sql
+-- Manually set a job to running with old heartbeat
+UPDATE scrape_jobs
+SET 
+  status = 'running',
+  locked_by = 'dead-worker',
+  heartbeat_at = NOW() - INTERVAL '10 minutes'
+WHERE id = '<job_id>';
+
+-- Wait for worker's reclaim check (runs every 60 seconds)
+-- Or manually trigger reclaim check by starting worker
+
+-- Check that job was reclaimed
+SELECT 
+  id,
+  status,
+  locked_by,
+  attempts,
+  last_error
+FROM scrape_jobs
+WHERE id = '<job_id>';
+```
+
+Expected result:
+- Status changed from `running` to `pending`
+- `attempts` incremented
+- `last_error` includes "Reclaimed due to missing heartbeat"
+
 ## Development
 
 ### Adding a New Collector

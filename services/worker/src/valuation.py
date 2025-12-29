@@ -168,10 +168,10 @@ class ValuationEngine:
                 score += 2
             elif sold_ratio >= 0.5:
                 score += 1
-            else:
-                # Cap confidence at 7 if only ASK comps exist (no sold comps)
-            if sold_count == 0:
-                score = min(score, 7)
+        
+        # Cap confidence at 7 if only ASK comps exist (no sold comps)
+        if sold_count == 0:
+            score = min(score, 7)
         
         # Factor 4: Price spread tightness (0-3 points)
         if percentiles['median'] and percentiles['p10'] and percentiles['p90']:

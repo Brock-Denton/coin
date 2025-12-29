@@ -1,11 +1,13 @@
 """eBay API collector for sold listings."""
 import hashlib
 import json
+import re
+from datetime import datetime
 from typing import List, Dict, Optional
 from ebaysdk.finding import Connection as Finding
 from ebaysdk.exception import ConnectionError as EbayConnectionError
 import structlog
-from src.collectors import BaseCollector
+from src.collectors.base import BaseCollector
 from src.config import settings
 
 logger = structlog.get_logger()
@@ -14,7 +16,7 @@ logger = structlog.get_logger()
 class EbayCollector(BaseCollector):
     """Collector for eBay sold listings using official eBay Finding API."""
     
-    def __init__(self, app_id: str, cert_id: str = None, dev_id: str = None, sandbox: bool = False):
+    def __init__(self, app_id: str, cert_id: str = None, dev_id: str = None, sandbox: bool = False, source_id: str = None, rate_limit_per_minute: int = 60):
         """Initialize eBay collector.
         
         Args:
@@ -22,7 +24,10 @@ class EbayCollector(BaseCollector):
             cert_id: eBay Cert ID (optional, for production)
             dev_id: eBay Dev ID (optional)
             sandbox: Use sandbox environment
+            source_id: Source ID for tracking and circuit breaker
+            rate_limit_per_minute: Rate limit (default 60)
         """
+        super().__init__(source_id=source_id, rate_limit_per_minute=rate_limit_per_minute)
         self.app_id = app_id
         self.cert_id = cert_id
         self.dev_id = dev_id
@@ -178,6 +183,87 @@ class EbayCollector(BaseCollector):
         
         return filtered
     
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL by removing query parameters and fragments.
+        
+        Args:
+            url: Original URL
+            
+        Returns:
+            Normalized URL
+        """
+        if not url:
+            return ''
+        # Remove query parameters and fragments for deduplication
+        normalized = url.split('?')[0].split('#')[0]
+        return normalized.strip().lower()
+    
+    def _normalize_title(self, title: str) -> str:
+        """Normalize title by lowercasing and removing extra whitespace.
+        
+        Args:
+            title: Original title
+            
+        Returns:
+            Normalized title
+        """
+        if not title:
+            return ''
+        # Lowercase and remove extra whitespace
+        normalized = ' '.join(title.lower().split())
+        return normalized
+    
+    def _generate_dedupe_key(
+        self,
+        external_id: Optional[str] = None,
+        listing_url: str = '',
+        listing_title: str = '',
+        price_cents: int = 0,
+        observed_at: Optional[str] = None,
+        price_type: str = 'sold'
+    ) -> str:
+        """Generate a deterministic dedupe key for a price point.
+        
+        Priority:
+        1. If external_id exists, use it directly (most reliable)
+        2. Otherwise, hash (normalized_url + normalized_title + price_cents + date_bucket + price_type)
+        
+        Args:
+            external_id: External identifier (e.g., eBay item ID)
+            listing_url: Listing URL
+            listing_title: Listing title
+            price_cents: Price in cents
+            observed_at: Observation timestamp
+            price_type: Type of price (sold, ask, bid)
+            
+        Returns:
+            Dedupe key string
+        """
+        if external_id:
+            # Use external_id directly as dedupe key (most reliable)
+            return f"ext_{external_id}"
+        
+        # Generate hash-based dedupe key
+        normalized_url = self._normalize_url(listing_url)
+        normalized_title = self._normalize_title(listing_title)
+        
+        # Create date bucket (day granularity)
+        if observed_at:
+            try:
+                # Parse timestamp and extract date (YYYY-MM-DD)
+                dt = datetime.fromisoformat(observed_at.replace('Z', '+00:00'))
+                date_bucket = dt.strftime('%Y-%m-%d')
+            except Exception:
+                date_bucket = 'unknown'
+        else:
+            date_bucket = 'unknown'
+        
+        # Create hash from components
+        hash_input = f"{normalized_url}|{normalized_title}|{price_cents}|{date_bucket}|{price_type}"
+        hash_value = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()[:16]
+        
+        return f"hash_{hash_value}"
+    
     def _normalize_price(self, price_str: str, currency: str = 'USD') -> Optional[int]:
         """Normalize price to USD cents.
         
@@ -197,7 +283,7 @@ class EbayCollector(BaseCollector):
             logger.warning("Failed to normalize price", price=price_str, currency=currency)
             return None
     
-    def collect(self, query_params: dict, exclude_keywords: List[str] = None) -> List[Dict]:
+    def _collect_impl(self, query_params: dict, exclude_keywords: List[str]) -> List[Dict]:
         """Collect sold listings from eBay.
         
         Args:
@@ -295,8 +381,21 @@ class EbayCollector(BaseCollector):
                 listing_info = item.get('listingInfo', {})
                 end_time = listing_info.get('endTime')
                 
+                # Extract external_id (eBay item ID)
+                external_id = item.get('itemId')
+                
                 # Compute match strength
                 match_strength = self._compute_match_strength(title, query_params)
+                
+                # Generate dedupe_key
+                dedupe_key = self._generate_dedupe_key(
+                    external_id=external_id,
+                    listing_url=listing_url,
+                    listing_title=title,
+                    price_cents=price_cents,
+                    observed_at=end_time,
+                    price_type=price_type
+                )
                 
                 price_point = {
                     'source_id': query_params.get('source_id'),  # Passed from job
@@ -310,6 +409,8 @@ class EbayCollector(BaseCollector):
                     'listing_date': end_time,
                     'observed_at': end_time,  # Use listing_date for observed_at
                     'match_strength': float(match_strength),
+                    'external_id': external_id,
+                    'dedupe_key': dedupe_key,
                     'filtered_out': False
                 }
                 
