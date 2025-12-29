@@ -8,6 +8,7 @@ interface BulkActionsToolbarProps {
   onRunPricing: () => void
   onExportCSV: () => void
   onClearSelection: () => void
+  exporting?: boolean
 }
 
 export function BulkActionsToolbar({
