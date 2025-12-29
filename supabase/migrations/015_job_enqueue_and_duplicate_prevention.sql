@@ -139,7 +139,7 @@ CREATE OR REPLACE FUNCTION enqueue_jobs(
 )
 RETURNS INTEGER AS $$
 DECLARE
-  source_id UUID;
+  v_source_id UUID;
   job_index INTEGER := 0;
   inserted_count INTEGER := 0;
   attribution_record RECORD;
@@ -164,7 +164,7 @@ BEGIN
   );
   
   -- Iterate through source_ids and insert jobs with staggered next_run_at
-  FOREACH source_id IN ARRAY p_source_ids
+  FOREACH v_source_id IN ARRAY p_source_ids
   LOOP
     INSERT INTO scrape_jobs (
       intake_id,
@@ -174,10 +174,10 @@ BEGIN
       next_run_at
     ) VALUES (
       p_intake_id,
-      source_id,
+      v_source_id,
       'pending',
       query_params_json,
-      NOW() + (p_base_delay_seconds + (p_stagger_seconds * job_index) || ' seconds')::INTERVAL
+      NOW() + make_interval(secs => p_base_delay_seconds + (p_stagger_seconds * job_index))
     )
     ON CONFLICT (intake_id, source_id) 
     WHERE status = 'pending' 

@@ -2,6 +2,7 @@
 from supabase import create_client, Client
 from src.config import settings
 from typing import Optional
+from datetime import datetime, timezone
 import structlog
 
 logger = structlog.get_logger()
@@ -72,13 +73,14 @@ def get_pending_jobs(limit: int = 10):
 def lock_job(job_id: str, worker_id: str) -> bool:
     """Attempt to lock a job. Returns True if successfully locked. (Deprecated - use claim_next_job instead)"""
     try:
+        now_iso = datetime.now(timezone.utc).isoformat()
         result = supabase.table("scrape_jobs") \
             .update({
                 "status": "running",
-                "locked_at": "now()",
+                "locked_at": now_iso,
                 "locked_by": worker_id,
-                "started_at": "now()",
-                "updated_at": "now()"
+                "started_at": now_iso,
+                "updated_at": now_iso
             }) \
             .eq("id", job_id) \
             .eq("status", "pending") \
@@ -96,9 +98,10 @@ def update_job_status(job_id: str, status: str, error_message: str = None):
     Sets completed_at only for terminal states: 'succeeded' or 'failed'.
     Does NOT set completed_at for 'retryable' (it's not terminal).
     """
+    now_iso = datetime.now(timezone.utc).isoformat()
     update_data = {
         "status": status,
-        "updated_at": "now()"
+        "updated_at": now_iso
     }
     
     # Map old status names to new ones for backwards compatibility
@@ -113,7 +116,7 @@ def update_job_status(job_id: str, status: str, error_message: str = None):
     # Only set completed_at for terminal states (succeeded, failed)
     # Do NOT set for retryable - it's handled by mark_job_retryable SQL function
     if status in ("succeeded", "failed"):
-        update_data["completed_at"] = "now()"
+        update_data["completed_at"] = now_iso
     
     if error_message:
         update_data["error_message"] = error_message
@@ -320,12 +323,13 @@ def update_source_stats(source_id: str, success: bool):
         success: True if operation succeeded, False if failed
     """
     try:
+        now_iso = datetime.now(timezone.utc).isoformat()
         if success:
             supabase.table("sources") \
                 .update({
-                    'last_success_at': 'now()',
+                    'last_success_at': now_iso,
                     'failure_streak': 0,
-                    'updated_at': 'now()'
+                    'updated_at': now_iso
                 }) \
                 .eq("id", source_id) \
                 .execute()
@@ -341,9 +345,9 @@ def update_source_stats(source_id: str, success: bool):
             
             supabase.table("sources") \
                 .update({
-                    'last_failure_at': 'now()',
+                    'last_failure_at': now_iso,
                     'failure_streak': new_streak,
-                    'updated_at': 'now()'
+                    'updated_at': now_iso
                 }) \
                 .eq("id", source_id) \
                 .execute()

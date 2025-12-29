@@ -26,10 +26,9 @@ interface SearchQueriesProps {
 export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueriesProps) {
   const [queries, setQueries] = useState<SearchQuery[]>([])
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [initialized, setInitialized] = useState(false)
 
-  // Generate search queries based on attribution
-  const generateQueries = useCallback(() => {
+  // Generate search queries based on attribution (returns array instead of setting state)
+  const generateQueriesArray = useCallback((): SearchQuery[] => {
     const queries: SearchQuery[] = []
     
     // Build base coin description
@@ -42,12 +41,12 @@ export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueries
       dollar: 'dollar'
     }
     
-    const denomination = denominationMap[attribution.denomination || ''] || ''
-    const year = attribution.year || ''
-    const mintmark = attribution.mintmark || ''
-    const grade = attribution.grade || ''
-    const series = attribution.series || ''
-    const title = attribution.title || ''
+    const denomination = denominationMap[attribution?.denomination || ''] || ''
+    const year = attribution?.year || ''
+    const mintmark = attribution?.mintmark || ''
+    const grade = attribution?.grade || ''
+    const series = attribution?.series || ''
+    const title = attribution?.title || ''
     
     // Query 1: PCGS CoinFacts (most authoritative)
     const pcgsParts = []
@@ -100,8 +99,34 @@ export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueries
       url: `https://www.google.com/search?q=${encodeURIComponent(numisFullQuery)}`
     })
     
-    setQueries(queries)
+    return queries
   }, [attribution])
+
+  // Regenerate queries while preserving existing state (found status, resultUrl, resultPrice)
+  const regenerateQueries = useCallback(() => {
+    setQueries(currentQueries => {
+      // Save current query state before regenerating
+      const savedState = currentQueries.reduce((acc, q) => {
+        acc[q.id] = {
+          found: q.found,
+          resultUrl: q.resultUrl,
+          resultPrice: q.resultPrice
+        }
+        return acc
+      }, {} as Record<string, { found?: boolean; resultUrl?: string; resultPrice?: string }>)
+      
+      // Generate new queries
+      const newQueries = generateQueriesArray()
+      
+      // Restore saved state for queries that still exist
+      const restoredQueries = newQueries.map(q => ({
+        ...q,
+        ...(savedState[q.id] || {})
+      }))
+      
+      return restoredQueries
+    })
+  }, [generateQueriesArray])
 
   const handleCopy = async (queryId: string, text: string) => {
     await navigator.clipboard.writeText(text)
@@ -123,13 +148,30 @@ export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueries
     ))
   }
 
-  // Generate queries on mount if attribution has data
+  // Auto-regenerate queries when attribution fields change
   useEffect(() => {
-    if (!initialized && attribution && (attribution.year || attribution.denomination || attribution.title)) {
-      generateQueries()
-      setInitialized(true)
+    // Only regenerate if we have at least one attribution field
+    const hasAttributionData = attribution && (
+      attribution.year || 
+      attribution.denomination || 
+      attribution.mintmark || 
+      attribution.series || 
+      attribution.grade || 
+      attribution.title
+    )
+    
+    if (hasAttributionData) {
+      regenerateQueries()
     }
-  }, [attribution, initialized, generateQueries])
+  }, [
+    attribution?.year,
+    attribution?.denomination,
+    attribution?.mintmark,
+    attribution?.series,
+    attribution?.grade,
+    attribution?.title,
+    regenerateQueries
+  ])
 
   const allQueriesCompleted = queries.length > 0 && queries.every(q => q.found !== undefined)
   const foundCount = queries.filter(q => q.found === true).length
@@ -144,7 +186,7 @@ export function SearchQueries({ attribution, onQueriesCompleted }: SearchQueries
               Copy and paste these searches into reputable coin pricing sources. Mark each as found or not found.
             </CardDescription>
           </div>
-          <Button onClick={generateQueries} variant="outline" size="sm">
+          <Button onClick={regenerateQueries} variant="outline" size="sm">
             Regenerate Queries
           </Button>
         </div>
