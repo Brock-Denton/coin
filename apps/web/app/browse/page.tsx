@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Nav } from '@/components/nav'
-import { BrowseFilters } from '@/components/browse-filters'
+import { BrowseFiltersWrapper } from '@/components/browse-filters-wrapper'
 import Link from 'next/link'
 import { Suspense } from 'react'
 
@@ -110,9 +110,7 @@ export default async function BrowsePage(props: BrowsePageProps) {
         <h1 className="text-4xl font-bold mb-8">Browse Coins</h1>
         
         <div className="mb-8">
-          <Suspense fallback={<div>Loading filters...</div>}>
-            <BrowseFilters />
-          </Suspense>
+          <BrowseFiltersWrapper />
         </div>
         
         <Suspense fallback={<div>Loading...</div>}>
