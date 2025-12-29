@@ -103,7 +103,7 @@ def process_job(job: dict):
     start_time = datetime.now()
     logger.info("Processing job", job_id=job_id, intake_id=intake_id, source_id=source_id, worker_id=settings.worker_id)
     
-    # Start heartbeat thread
+    # Start heartbeat thread FIRST (before any early returns)
     heartbeat_stop = threading.Event()
     heartbeat_thread = threading.Thread(
         target=_heartbeat_loop,
@@ -204,10 +204,6 @@ def process_job(job: dict):
             'comp_count': valuation['comp_count']
         })
         
-        # Stop heartbeat
-        heartbeat_stop.set()
-        heartbeat_thread.join(timeout=1)
-        
         # Mark job as succeeded
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         update_job_status(job_id, 'succeeded', None)
@@ -219,10 +215,6 @@ def process_job(job: dict):
                    worker_id=settings.worker_id)
         
     except Exception as e:
-        # Stop heartbeat
-        heartbeat_stop.set()
-        heartbeat_thread.join(timeout=1)
-        
         error_msg = str(e)
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         logger.error("Job failed", 
@@ -246,6 +238,13 @@ def process_job(job: dict):
         else:
             # Mark as permanently failed
             update_job_status(job_id, 'failed', error_msg)
+    
+    finally:
+        # Always stop heartbeat thread, even on early returns or exceptions
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=2)
+        if heartbeat_thread.is_alive():
+            logger.warning("Heartbeat thread did not stop within timeout", job_id=job_id)
 
 
 def _heartbeat_loop(job_id: str, stop_event: threading.Event):
