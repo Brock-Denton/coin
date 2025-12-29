@@ -227,48 +227,6 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       
       {/* Pricing Ready Checklist */}
       <PricingReadyChecklist intake={intake} />
-        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <DialogTrigger asChild>
-            <Button variant="destructive" size="sm">
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete Intake
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Delete Intake</DialogTitle>
-              <DialogDescription>
-                Are you sure you want to delete intake <strong>{intake.intake_number}</strong>? 
-                This will permanently delete the intake and all associated data including:
-                <ul className="list-disc list-inside mt-2 space-y-1">
-                  <li>Photos and media</li>
-                  <li>Attribution data</li>
-                  <li>Price points and valuations</li>
-                  <li>Scrape jobs and logs</li>
-                  <li>Manual search results</li>
-                </ul>
-                <strong className="block mt-3 text-destructive">This action cannot be undone.</strong>
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setDeleteDialogOpen(false)}
-                disabled={deleting}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={handleDeleteIntake}
-                disabled={deleting}
-              >
-                {deleting ? 'Deleting...' : 'Delete'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
       
       {/* Images */}
       <Card>
