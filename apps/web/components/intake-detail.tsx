@@ -324,17 +324,51 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   const handleDeleteIntake = async () => {
     setDeleting(true)
     try {
-      const { error } = await supabase
+      // Check for linked products first (helpful UX feedback)
+      const { data: linkedProducts } = await supabase
+        .from('products')
+        .select('id, title, status')
+        .eq('intake_id', intake.id)
+        .limit(1)
+      
+      if (linkedProducts && linkedProducts.length > 0) {
+        const product = linkedProducts[0]
+        const confirmMessage = `This intake has a linked product "${product.title}" (${product.status}). The product will be unlinked (intake_id set to NULL) but will remain in the database. Continue?`
+        if (!confirm(confirmMessage)) {
+          setDeleting(false)
+          return
+        }
+      }
+      
+      // Delete with timeout handling
+      const deletePromise = supabase
         .from('coin_intakes')
         .delete()
         .eq('id', intake.id)
+        .then(result => result)
       
-      if (error) throw error
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Delete operation timed out after 30 seconds')), 30000)
+      )
+      
+      const result = await Promise.race([deletePromise, timeoutPromise]) as any
+      const { error } = result
+      
+      if (error) {
+        // Provide more specific error messages
+        if (error.code === '23503') {
+          throw new Error('Cannot delete intake: it is still referenced by other records. Please remove all references first.')
+        } else if (error.message?.includes('timeout')) {
+          throw new Error('Delete operation timed out. The intake may be locked or have too many related records.')
+        }
+        throw error
+      }
       
       // Redirect to intakes list
       router.push('/admin/intakes')
     } catch (err: any) {
-      alert(`Error deleting intake: ${err.message}`)
+      const errorMessage = err.message || 'An unexpected error occurred while deleting the intake'
+      alert(`Error deleting intake: ${errorMessage}`)
       setDeleting(false)
     }
   }
