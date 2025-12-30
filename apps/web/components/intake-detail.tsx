@@ -129,7 +129,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       }
       
       // Update local state to reflect saved keywords as strings
-      setAttribution(prev => ({
+      setAttribution((prev: typeof attribution) => ({
         ...prev,
         keywords_include_string: keywordsIncludeArray.join(', '),
         keywords_exclude_string: keywordsExcludeArray.join(', '),
@@ -191,7 +191,6 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         console.error('Auto-save failed:', err)
       })
     }, 2000)
-  }, [attribution.year, attribution.mintmark, attribution.denomination, attribution.series, attribution.variety, attribution.grade, attribution.title, attribution.notes, attribution.keywords_include_string, attribution.keywords_exclude_string])
 
     // Cleanup timeout on unmount or dependency change
     return () => {
