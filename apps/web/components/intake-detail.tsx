@@ -697,7 +697,7 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
           )}
           
           {/* Job Status */}
-          <JobStatus intakeId={intake.id} jobs={jobs} onRefresh={() => router.refresh()} />
+          <JobStatus intakeId={intake.id} jobs={jobs} pricePoints={pricePoints} onRefresh={() => router.refresh()} />
           
           <div>
             <h3 className="font-semibold mb-2">Price Points ({pricePoints.length})</h3>

@@ -6,15 +6,17 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/lib/supabase/client'
-import { RefreshCw, CheckCircle2, XCircle, Clock, Loader2 } from 'lucide-react'
+import { RefreshCw, CheckCircle2, XCircle, Clock, Loader2, AlertTriangle } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 interface JobStatusProps {
   intakeId: string
   jobs: any[]
+  pricePoints?: any[] // Optional: for detecting "no results" scenarios
   onRefresh?: () => void
 }
 
-export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
+export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobStatusProps) {
   const [currentJobs, setCurrentJobs] = useState(jobs)
   const [isPolling, setIsPolling] = useState(false)
   const supabase = createClient()
@@ -62,7 +64,7 @@ export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'completed':
+      case 'succeeded':
         return <Badge variant="default" className="bg-green-600"><CheckCircle2 className="h-3 w-3 mr-1" /> Completed</Badge>
       case 'running':
         return <Badge variant="default" className="bg-blue-600"><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Running</Badge>
@@ -70,6 +72,8 @@ export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
         return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" /> Pending</Badge>
       case 'failed':
         return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" /> Failed</Badge>
+      case 'retryable':
+        return <Badge variant="default" className="bg-yellow-600"><Clock className="h-3 w-3 mr-1" /> Retryable</Badge>
       case 'cancelled':
         return <Badge variant="outline">Cancelled</Badge>
       default:
@@ -79,7 +83,7 @@ export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed':
+      case 'succeeded':
         return <CheckCircle2 className="h-5 w-5 text-green-600" />
       case 'running':
         return <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
@@ -87,14 +91,23 @@ export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
         return <Clock className="h-5 w-5 text-muted-foreground" />
       case 'failed':
         return <XCircle className="h-5 w-5 text-red-600" />
+      case 'retryable':
+        return <Clock className="h-5 w-5 text-yellow-600" />
       default:
         return <Clock className="h-5 w-5 text-muted-foreground" />
     }
   }
 
+  const getJobRuntimeMinutes = (job: any) => {
+    if (!job.started_at || job.status !== 'running') return 0
+    return (Date.now() - new Date(job.started_at).getTime()) / 1000 / 60
+  }
+
   const getProgressValue = () => {
     if (currentJobs.length === 0) return 0
-    const completed = currentJobs.filter((j: any) => j.status === 'completed').length
+    const completed = currentJobs.filter((j: any) => 
+      j.status === 'succeeded' || j.status === 'failed'
+    ).length
     return (completed / currentJobs.length) * 100
   }
 
@@ -102,9 +115,22 @@ export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
     job.status === 'pending' || job.status === 'running'
   )
 
+  const stuckJobs = currentJobs.filter((job: any) => getJobRuntimeMinutes(job) > 10)
+  const hasStuckJobs = stuckJobs.length > 0
+  const maxRuntimeMinutes = stuckJobs.length > 0 
+    ? Math.max(...stuckJobs.map((job: any) => getJobRuntimeMinutes(job)))
+    : 0
+
   const allCompleted = currentJobs.length > 0 && currentJobs.every((job: any) => 
-    job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
+    job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled'
   )
+
+  // Check for succeeded jobs with no price points
+  const hasNoResultsJobs = currentJobs.some((job: any) => {
+    if (job.status !== 'succeeded') return false
+    const jobPricePoints = pricePoints.filter((pp: any) => pp.job_id === job.id)
+    return jobPricePoints.length === 0
+  })
 
   if (currentJobs.length === 0) {
     return null
@@ -137,7 +163,7 @@ export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>Overall Progress</span>
-            <span>{currentJobs.filter((j: any) => j.status === 'completed').length} / {currentJobs.length}</span>
+            <span>{currentJobs.filter((j: any) => j.status === 'succeeded' || j.status === 'failed').length} / {currentJobs.length}</span>
           </div>
           <Progress value={getProgressValue()} />
         </div>
@@ -170,7 +196,29 @@ export function JobStatus({ intakeId, jobs, onRefresh }: JobStatusProps) {
           ))}
         </div>
 
-        {hasActiveJobs && (
+        {/* Timeout Warning */}
+        {hasStuckJobs && (
+          <Alert variant="destructive" className="border-yellow-500 bg-yellow-50 dark:bg-yellow-950">
+            <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            <AlertDescription className="text-yellow-900 dark:text-yellow-100">
+              <strong>Job timeout detected.</strong> One or more jobs have been running for {Math.round(maxRuntimeMinutes)} minutes. 
+              This may indicate an issue. Check worker logs or try re-running the job.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* No Results Warning */}
+        {hasNoResultsJobs && !hasActiveJobs && (
+          <Alert className="border-blue-500 bg-blue-50 dark:bg-blue-950">
+            <AlertTriangle className="h-4 w-4 text-blue-600" />
+            <AlertDescription className="text-blue-900 dark:text-blue-100">
+              <strong>No matching listings found.</strong> One or more jobs completed successfully but found no matching listings. 
+              Try adjusting your search criteria (year, denomination, series, etc.) or check the search query.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {hasActiveJobs && !hasStuckJobs && (
           <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
             <p className="text-sm text-blue-900 dark:text-blue-100">
               <strong>Jobs are processing.</strong> This typically takes 2-5 minutes. 
