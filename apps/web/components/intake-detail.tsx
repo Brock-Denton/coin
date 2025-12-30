@@ -411,7 +411,18 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       </div>
       
       {/* Pricing Ready Checklist */}
-      <PricingReadyChecklist intake={intake} />
+      <PricingReadyChecklist 
+        intake={{
+          ...intake,
+          attributions: attribution ? [{
+            ...attribution,
+            year: attribution.year ? Number(attribution.year) : null,
+            denomination: attribution.denomination || null,
+            series: attribution.series || null,
+            title: attribution.title || null,
+          }] : intake.attributions
+        }}
+      />
       
       {/* Pricing Summary Panel */}
       <PricingSummaryPanel valuation={intake.valuations?.[0]} pricePoints={pricePoints} />
