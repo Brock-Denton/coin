@@ -30,10 +30,10 @@ def upsert_worker_heartbeat(worker_id: str, meta: dict = None):
 
 
 def claim_next_job(worker_id: str) -> Optional[dict]:
-    """Atomically claim the next pending or retryable job.
+    """Atomically claim the next pending pricing job from the queue.
     
     Uses the database function for atomic job acquisition to prevent
-    double-processing by multiple workers.
+    double-processing by multiple workers. Only claims jobs with job_type='pricing'.
     
     Args:
         worker_id: Worker instance identifier
@@ -44,7 +44,8 @@ def claim_next_job(worker_id: str) -> Optional[dict]:
     try:
         result = supabase.rpc('claim_next_pending_job', {
             'p_worker_id': worker_id,
-            'p_lock_timeout_seconds': settings.job_lock_timeout_seconds
+            'p_lock_timeout_seconds': settings.job_lock_timeout_seconds,
+            'p_job_type': 'pricing'
         }).execute()
         
         if result.data and len(result.data) > 0:

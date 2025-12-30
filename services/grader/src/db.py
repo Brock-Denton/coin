@@ -120,6 +120,9 @@ def log_job_event(job_id: str, level: str, message: str, metadata: dict = None):
 def get_coin_images(intake_id: str) -> List[Dict]:
     """Get coin images for an intake.
     
+    Tries to fetch by `kind` column first (new schema). Falls back to `media_type`
+    column for backward compatibility with existing data.
+    
     Args:
         intake_id: Intake ID
         
@@ -127,12 +130,25 @@ def get_coin_images(intake_id: str) -> List[Dict]:
         List of image dictionaries
     """
     try:
+        # First try: use kind column (new schema)
+        result = supabase.table("coin_media") \
+            .select("*") \
+            .eq("intake_id", intake_id) \
+            .in_("kind", ["obverse", "reverse", "edge"]) \
+            .order("kind", desc=False) \
+            .execute()
+        
+        if result.data and len(result.data) > 0:
+            return result.data
+        
+        # Fallback: use media_type column (backward compatibility)
         result = supabase.table("coin_media") \
             .select("*") \
             .eq("intake_id", intake_id) \
             .in_("media_type", ["obverse", "reverse", "edge"]) \
             .order("media_type", desc=False) \
             .execute()
+        
         return result.data if result.data else []
     except Exception as e:
         logger.error("Failed to get coin images", intake_id=intake_id, error=str(e))

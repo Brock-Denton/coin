@@ -64,3 +64,19 @@ Future model versions can be added by implementing new estimator classes and upd
 6. Grader computes recommendations for each grading service
 7. Results stored in database and displayed on intake detail page
 
+## Smoke Testing
+
+To verify the grader service can process images:
+
+1. **Verify coin_media schema**: Ensure `coin_media` rows have the `kind` column set to 'obverse', 'reverse', or 'edge'. The `media_type` should be 'photo' for images.
+
+2. **Check grading job sees images**:
+   - Create a grading job via `enqueue_grading_job(intake_id)` RPC
+   - Check grader logs for "Found coin images" message with image count
+   - If no images found, verify:
+     - `coin_media` rows exist for the intake_id
+     - Rows have `kind IN ('obverse', 'reverse', 'edge')` (or `media_type` for legacy data)
+     - Grader service has proper database access
+
+3. **Verify job claiming**: The grader should only claim jobs where `job_type='grading'`. The worker service claims jobs where `job_type='pricing'`.
+

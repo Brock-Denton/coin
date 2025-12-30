@@ -450,7 +450,9 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         .from('coin_media')
         .insert({
           intake_id: intake.id,
-          media_type: mediaType,
+          kind: mediaType,
+          media_type: 'photo',
+          capture_type: 'phone',
           storage_path: filePath,
           file_name: file.name,
           file_size: file.size,
@@ -470,8 +472,8 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   
   const valuation = intake.valuations?.[0]
   const images = intake.coin_media || []
-  const obverseImage = images.find((img: any) => img.media_type === 'obverse')
-  const reverseImage = images.find((img: any) => img.media_type === 'reverse')
+  const obverseImage = images.find((img: any) => img.kind === 'obverse')
+  const reverseImage = images.find((img: any) => img.kind === 'reverse')
   
   return (
     <div className="space-y-8">
