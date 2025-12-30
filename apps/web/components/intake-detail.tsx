@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { SearchQueries } from '@/components/search-queries'
 import { JobStatus } from '@/components/job-status'
 import { PricingReadyChecklist } from '@/components/pricing-ready-checklist'
@@ -666,7 +667,12 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-4xl font-bold mb-2">{intake.intake_number}</h1>
+          <div className="flex items-center gap-3 mb-2">
+            <h1 className="text-4xl font-bold">{intake.intake_number}</h1>
+            <Link href="/admin/intakes" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              Back to Intakes
+            </Link>
+          </div>
           <Badge>{intake.status}</Badge>
         </div>
         <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

@@ -27,7 +27,7 @@ export default async function AdminLayout({
   
   return (
     <div className="min-h-screen bg-[#09090b]">
-      <nav className="sticky top-0 z-[100] pointer-events-auto border-b border-[#27272a] glass-strong bg-[#09090b]">
+      <nav className="sticky top-0 z-[1000] isolate pointer-events-auto border-b border-[#27272a] glass-strong bg-[#09090b]">
         <div className="container mx-auto px-4 py-4">
           <AdminTopNav />
         </div>
