@@ -51,10 +51,17 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
   const handleRunPricing = async () => {
     setLoading(true)
     setPricingMessage(null)
+    console.log('[handleRunPricing] Starting pricing job enqueue', {
+      intakeId: intake.id,
+      pricingMode,
+      activeJobsCount: jobs.filter((j: any) => j.status === 'pending' || j.status === 'running').length
+    })
+    
     try {
       // Check for existing active jobs (pending/running)
       const activeJobs = jobs.filter((j: any) => j.status === 'pending' || j.status === 'running')
       if (activeJobs.length > 0) {
+        console.log('[handleRunPricing] Active jobs exist, blocking', { activeJobsCount: activeJobs.length })
         setPricingMessage({ type: 'error', text: `Cannot queue: ${activeJobs.length} active job(s) already exist. Use "Re-run Pricing" after they complete.` })
         setLoading(false)
         return
@@ -63,6 +70,7 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       let sourceIds: string[] = []
 
       if (pricingMode === 'ebay_only') {
+        console.log('[handleRunPricing] Fetching eBay sources')
         // Get eBay source
         const { data: ebaySources, error: ebayError } = await supabase
           .from('sources')
@@ -71,16 +79,24 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
           .eq('adapter_type', 'ebay_api')
           .limit(1)
         
-        if (ebayError) throw ebayError
+        console.log('[handleRunPricing] eBay sources query result', { ebaySources, ebayError })
+        
+        if (ebayError) {
+          console.error('[handleRunPricing] Error fetching eBay sources', ebayError)
+          throw ebayError
+        }
         
         if (!ebaySources || ebaySources.length === 0) {
+          console.warn('[handleRunPricing] No enabled eBay source found')
           setPricingMessage({ type: 'error', text: 'No enabled eBay source found' })
           setLoading(false)
           return
         }
         
         sourceIds = ebaySources.map((s: any) => s.id)
+        console.log('[handleRunPricing] eBay source IDs', { sourceIds })
       } else {
+        console.log('[handleRunPricing] Fetching all enabled sources')
         // Get all enabled sources in stable order
         const { data: allSources, error: allError } = await supabase
           .from('sources')
@@ -88,16 +104,30 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
           .eq('enabled', true)
           .order('name', { ascending: true })
         
-        if (allError) throw allError
+        console.log('[handleRunPricing] All sources query result', { allSources, allError })
+        
+        if (allError) {
+          console.error('[handleRunPricing] Error fetching all sources', allError)
+          throw allError
+        }
         
         if (!allSources || allSources.length === 0) {
+          console.warn('[handleRunPricing] No enabled sources found')
           setPricingMessage({ type: 'error', text: 'No enabled sources found' })
           setLoading(false)
           return
         }
         
         sourceIds = allSources.map((s: any) => s.id)
+        console.log('[handleRunPricing] All source IDs', { sourceIds })
       }
+
+      console.log('[handleRunPricing] Calling enqueue_jobs RPC', {
+        p_intake_id: intake.id,
+        p_source_ids: sourceIds,
+        p_base_delay_seconds: 0,
+        p_stagger_seconds: 2
+      })
 
       // Call enqueue_jobs RPC
       const { data, error } = await supabase.rpc('enqueue_jobs', {
@@ -107,10 +137,19 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         p_stagger_seconds: 2
       })
 
+      console.log('[handleRunPricing] enqueue_jobs RPC result', { data, error })
+
       if (error) {
+        console.error('[handleRunPricing] RPC error details', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        })
         setPricingMessage({ type: 'error', text: `Error: ${error.message}` })
       } else {
         const createdCount = data || 0
+        console.log('[handleRunPricing] Jobs created', { createdCount })
         if (createdCount === 0) {
           setPricingMessage({ type: 'error', text: 'No jobs created. Pending jobs may already exist for these sources.' })
         } else {
@@ -183,6 +222,14 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       }
 
       // Call enqueue_jobs RPC (will automatically handle duplicates via unique index)
+      console.log('[handleRerunPricing] Calling enqueue_jobs RPC', {
+        p_intake_id: intake.id,
+        p_source_ids: sourceIds,
+        p_base_delay_seconds: 0,
+        p_stagger_seconds: 2
+      })
+
+      // Call enqueue_jobs RPC (will automatically handle duplicates via unique index)
       const { data, error } = await supabase.rpc('enqueue_jobs', {
         p_intake_id: intake.id,
         p_source_ids: sourceIds,
@@ -190,10 +237,19 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         p_stagger_seconds: 2
       })
 
+      console.log('[handleRerunPricing] enqueue_jobs RPC result', { data, error })
+
       if (error) {
+        console.error('[handleRerunPricing] RPC error details', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        })
         setPricingMessage({ type: 'error', text: `Error: ${error.message}` })
       } else {
         const createdCount = data || 0
+        console.log('[handleRerunPricing] Jobs created', { createdCount })
         if (createdCount === 0) {
           setPricingMessage({ type: 'error', text: 'No jobs created. Pending jobs may already exist.' })
         } else {
@@ -484,12 +540,14 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Denomination (required)</Label>
+              <Label className={attribution.denomination ? 'text-green-500' : 'text-red-500'}>
+                Denomination (required)
+              </Label>
               <Select
                 value={attribution.denomination || ''}
                 onValueChange={(value) => setAttribution({ ...attribution, denomination: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger className={attribution.denomination ? 'border-green-500 focus:ring-green-500' : 'border-red-500 focus:ring-red-500'}>
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
                 <SelectContent>
@@ -506,11 +564,14 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
               </p>
             </div>
             <div>
-              <Label>Year (required)</Label>
+              <Label className={attribution.year ? 'text-green-500' : 'text-red-500'}>
+                Year (required)
+              </Label>
               <Input
                 type="number"
                 value={attribution.year || ''}
                 onChange={(e) => setAttribution({ ...attribution, year: parseInt(e.target.value) || null })}
+                className={attribution.year ? 'border-green-500 focus:ring-green-500' : 'border-red-500 focus:ring-red-500'}
               />
               <p className="text-xs text-muted-foreground mt-1">
                 The year the coin was minted (usually found on the front of the coin)
@@ -551,11 +612,14 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
             </div>
           </div>
           <div>
-            <Label>Title/Keywords (required if Series is empty)</Label>
+            <Label className={(attribution.title || attribution.series) ? 'text-green-500' : 'text-red-500'}>
+              Title/Keywords (required if Series is empty)
+            </Label>
             <Input
               value={attribution.title || ''}
               onChange={(e) => setAttribution({ ...attribution, title: e.target.value })}
               placeholder="US coin keywords for search"
+              className={(attribution.title || attribution.series) ? 'border-green-500 focus:ring-green-500' : 'border-red-500 focus:ring-red-500'}
             />
           </div>
           <div>
