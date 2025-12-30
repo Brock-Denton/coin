@@ -20,6 +20,7 @@ DECLARE
   inserted_count INTEGER := 0;
   attribution_record RECORD;
   query_params_json JSONB;
+  rows_inserted INTEGER;
 BEGIN
   -- Get attribution data for query_params
   SELECT * INTO attribution_record
@@ -68,8 +69,11 @@ BEGIN
       WHERE status = 'pending' 
       DO NOTHING; -- Prevent duplicate pending jobs via partial unique index
       
-      -- Check if row was inserted (GET DIAGNOSTICS is more reliable than FOUND)
-      GET DIAGNOSTICS inserted_count = inserted_count + ROW_COUNT;
+      -- Check if row was inserted (ROW_COUNT is 1 if inserted, 0 if conflict)
+      GET DIAGNOSTICS rows_inserted = ROW_COUNT;
+      IF rows_inserted > 0 THEN
+        inserted_count := inserted_count + 1;
+      END IF;
       
     EXCEPTION
       WHEN OTHERS THEN
