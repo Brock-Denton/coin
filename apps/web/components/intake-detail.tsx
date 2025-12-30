@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -55,6 +55,173 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   const [gradingLoading, setGradingLoading] = useState(false)
   const router = useRouter()
   const supabase = createClient()
+  
+  // Track if attribution has changed from initial state
+  const hasUnsavedChanges = useRef(false)
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isInitialMount = useRef(true)
+  
+  // Normalize keywords from comma-separated string to array
+  const normalizeKeywords = (keywordsString: string): string[] => {
+    if (!keywordsString || keywordsString.trim() === '') return []
+    return keywordsString
+      .split(',')
+      .map(k => k.trim().toLowerCase())
+      .filter(k => k.length > 0)
+  }
+
+  // Extract save logic into reusable function
+  const saveAttribution = async (showAlert = false) => {
+    try {
+      // Normalize keywords from comma-separated strings to arrays
+      const keywordsIncludeArray = normalizeKeywords(attribution.keywords_include_string || '')
+      const keywordsExcludeArray = normalizeKeywords(attribution.keywords_exclude_string || '')
+
+      // Helper function to convert empty strings to null
+      const nullIfEmpty = (value: any): any => {
+        if (value === '' || value === undefined) return null
+        return value
+      }
+
+      // Helper function to ensure year is a number or null
+      const normalizeYear = (year: any): number | null => {
+        if (!year && year !== 0) return null
+        const num = Number(year)
+        return isNaN(num) ? null : num
+      }
+
+      const attributionData: any = {
+        intake_id: intake.id,
+        year: normalizeYear(attribution.year),
+        mintmark: nullIfEmpty(attribution.mintmark),
+        denomination: nullIfEmpty(attribution.denomination),
+        series: nullIfEmpty(attribution.series),
+        variety: nullIfEmpty(attribution.variety),
+        grade: nullIfEmpty(attribution.grade),
+        title: nullIfEmpty(attribution.title),
+        notes: nullIfEmpty(attribution.notes),
+        keywords_include: keywordsIncludeArray,
+        keywords_exclude: keywordsExcludeArray,
+      }
+
+      if (attribution.id) {
+        // Update
+        const { error } = await supabase
+          .from('attributions')
+          .update(attributionData)
+          .eq('id', attribution.id)
+        
+        if (error) throw error
+      } else {
+        // Create
+        const { error, data } = await supabase
+          .from('attributions')
+          .insert(attributionData)
+          .select()
+          .single()
+        
+        if (error) throw error
+        
+        // Update local state with the new ID
+        if (data) {
+          setAttribution({ ...attribution, id: data.id })
+        }
+      }
+      
+      // Update local state to reflect saved keywords as strings
+      setAttribution(prev => ({
+        ...prev,
+        keywords_include_string: keywordsIncludeArray.join(', '),
+        keywords_exclude_string: keywordsExcludeArray.join(', '),
+      }))
+      
+      hasUnsavedChanges.current = false
+      
+      if (showAlert) {
+        alert('Attribution saved successfully')
+      }
+      router.refresh()
+    } catch (err: any) {
+      if (showAlert) {
+        alert(`Error: ${err.message}`)
+      }
+      throw err
+    }
+  }
+
+  // Mark as changed when attribution state updates (skip on initial mount)
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false
+      return
+    }
+    
+    // Compare current attribution with initial to detect changes
+    const isChanged = JSON.stringify(attribution) !== JSON.stringify({
+      ...initialAttribution,
+      keywords_include_string: initialAttribution.keywords_include 
+        ? (Array.isArray(initialAttribution.keywords_include) 
+            ? initialAttribution.keywords_include.join(', ') 
+            : initialAttribution.keywords_include)
+        : '',
+      keywords_exclude_string: initialAttribution.keywords_exclude
+        ? (Array.isArray(initialAttribution.keywords_exclude)
+            ? initialAttribution.keywords_exclude.join(', ')
+            : initialAttribution.keywords_exclude)
+        : '',
+    })
+    hasUnsavedChanges.current = isChanged
+  }, [attribution])
+
+  // Auto-save on attribution changes (debounced)
+  useEffect(() => {
+    // Skip auto-save on initial mount or if no changes
+    if (isInitialMount.current || !hasUnsavedChanges.current) {
+      return
+    }
+
+    // Clear existing timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+
+    // Set new timeout for debounced save (2 seconds after last change)
+    saveTimeoutRef.current = setTimeout(() => {
+      saveAttribution(false).catch((err) => {
+        console.error('Auto-save failed:', err)
+      })
+    }, 2000)
+  }, [attribution.year, attribution.mintmark, attribution.denomination, attribution.series, attribution.variety, attribution.grade, attribution.title, attribution.notes, attribution.keywords_include_string, attribution.keywords_exclude_string])
+
+    // Cleanup timeout on unmount or dependency change
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+      }
+    }
+  }, [attribution.year, attribution.mintmark, attribution.denomination, attribution.series, attribution.variety, attribution.grade, attribution.title, attribution.notes, attribution.keywords_include_string, attribution.keywords_exclude_string])
+
+  // Store latest saveAttribution in ref for unmount cleanup
+  const saveAttributionRef = useRef(saveAttribution)
+  saveAttributionRef.current = saveAttribution
+  
+  // Save on unmount (navigation away)
+  useEffect(() => {
+    return () => {
+      // Clear any pending debounced save
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+      }
+      
+      // Save immediately if there are unsaved changes
+      // Use ref to access latest saveAttribution function
+      if (hasUnsavedChanges.current) {
+        saveAttributionRef.current(false).catch((err) => {
+          console.error('Save on unmount failed:', err)
+        })
+      }
+    }
+  }, [])
   
   // Get latest grade estimate and recommendations
   const latestGradeEstimate = (gradeEstimates && gradeEstimates.length > 0) 
@@ -365,15 +532,6 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
     }
   }
 
-  // Normalize keywords from comma-separated string to array
-  const normalizeKeywords = (keywordsString: string): string[] => {
-    if (!keywordsString || keywordsString.trim() === '') return []
-    return keywordsString
-      .split(',')
-      .map(k => k.trim().toLowerCase())
-      .filter(k => k.length > 0)
-  }
-
   // Convert keywords array to comma-separated string for display
   const keywordsToString = (keywordsArray: string[] | null | undefined): string => {
     if (!keywordsArray || !Array.isArray(keywordsArray)) return ''
@@ -383,65 +541,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   const handleSaveAttribution = async () => {
     setLoading(true)
     try {
-      // Normalize keywords from comma-separated strings to arrays
-      const keywordsIncludeArray = normalizeKeywords(attribution.keywords_include_string || '')
-      const keywordsExcludeArray = normalizeKeywords(attribution.keywords_exclude_string || '')
-
-      // Helper function to convert empty strings to null
-      const nullIfEmpty = (value: any): any => {
-        if (value === '' || value === undefined) return null
-        return value
-      }
-
-      // Helper function to ensure year is a number or null
-      const normalizeYear = (year: any): number | null => {
-        if (!year && year !== 0) return null
-        const num = Number(year)
-        return isNaN(num) ? null : num
-      }
-
-      const attributionData: any = {
-        intake_id: intake.id,
-        year: normalizeYear(attribution.year),
-        mintmark: nullIfEmpty(attribution.mintmark),
-        denomination: nullIfEmpty(attribution.denomination),
-        series: nullIfEmpty(attribution.series),
-        variety: nullIfEmpty(attribution.variety),
-        grade: nullIfEmpty(attribution.grade),
-        title: nullIfEmpty(attribution.title),
-        notes: nullIfEmpty(attribution.notes),
-        keywords_include: keywordsIncludeArray,
-        keywords_exclude: keywordsExcludeArray,
-      }
-
-      if (attribution.id) {
-        // Update
-        const { error } = await supabase
-          .from('attributions')
-          .update(attributionData)
-          .eq('id', attribution.id)
-        
-        if (error) throw error
-      } else {
-        // Create
-        const { error } = await supabase
-          .from('attributions')
-          .insert(attributionData)
-        
-        if (error) throw error
-      }
-      
-      // Update local state to reflect saved keywords as strings
-      setAttribution({
-        ...attribution,
-        keywords_include_string: keywordsIncludeArray.join(', '),
-        keywords_exclude_string: keywordsExcludeArray.join(', '),
-      })
-      
-      alert('Attribution saved successfully')
-      router.refresh()
-    } catch (err: any) {
-      alert(`Error: ${err.message}`)
+      await saveAttribution(true)
     } finally {
       setLoading(false)
     }
