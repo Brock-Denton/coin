@@ -530,7 +530,9 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       
       // Step 2: Treat success OR "not found/already deleted" as success
       // No error = success; empty data array = already deleted (also success)
-      const isSuccess = !error || error.code === 'PGRST116' || error.message?.toLowerCase().includes('not found') || (data && Array.isArray(data) && data.length === 0)
+      const isEmptyDataArray = data && Array.isArray(data) && data.length === 0
+      const isNotFoundError = error && (error.code === 'PGRST116' || error.message?.toLowerCase().includes('not found'))
+      const isSuccess = !error || isNotFoundError || isEmptyDataArray
       
       if (!isSuccess) {
         // Only throw for real errors (like foreign key constraints)
