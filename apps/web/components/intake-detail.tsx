@@ -340,32 +340,24 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         }
       }
       
-      // Delete with timeout handling
-      const deletePromise = supabase
+      // Delete the intake (Supabase handles its own timeouts)
+      const { error } = await supabase
         .from('coin_intakes')
         .delete()
         .eq('id', intake.id)
-        .then(result => result)
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Delete operation timed out after 30 seconds')), 30000)
-      )
-      
-      const result = await Promise.race([deletePromise, timeoutPromise]) as any
-      const { error } = result
       
       if (error) {
         // Provide more specific error messages
         if (error.code === '23503') {
           throw new Error('Cannot delete intake: it is still referenced by other records. Please remove all references first.')
-        } else if (error.message?.includes('timeout')) {
-          throw new Error('Delete operation timed out. The intake may be locked or have too many related records.')
         }
         throw error
       }
       
-      // Redirect to intakes list
+      // Success - close dialog and redirect
+      setDeleteDialogOpen(false)
       router.push('/admin/intakes')
+      router.refresh()
     } catch (err: any) {
       const errorMessage = err.message || 'An unexpected error occurred while deleting the intake'
       alert(`Error deleting intake: ${errorMessage}`)
