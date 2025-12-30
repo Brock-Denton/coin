@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { IntakeDetail } from '@/components/intake-detail'
 
 interface IntakeDetailPageProps {
@@ -24,7 +24,7 @@ export default async function IntakeDetailPage(props: IntakeDetailPageProps) {
     .single()
   
   if (!intake) {
-    notFound()
+    redirect('/admin/intakes')
   }
   
   // Get price points

@@ -549,27 +549,37 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         router.refresh()
       })
       
-      // Step 4: Perform storage cleanup as best-effort AFTER navigation is triggered
+      // Hard fallback to ensure we never remain on deleted intake URL
+      setTimeout(() => {
+        if (window.location.pathname.includes('/admin/intakes/')) {
+          window.location.assign('/admin/intakes')
+        }
+      }, 200)
+      
+      // Step 4: Perform storage cleanup as best-effort AFTER navigation is triggered (fire-and-forget)
       if (storagePaths.length > 0) {
-        try {
-          const { error: storageError } = await supabase.storage
-            .from('coin-media')
-            .remove(storagePaths)
-          
-          if (storageError) {
-            console.error('Storage cleanup failed:', storageError)
+        // Fire-and-forget: don't await, use void to explicitly ignore promise
+        void (async () => {
+          try {
+            const { error: storageError } = await supabase.storage
+              .from('coin-media')
+              .remove(storagePaths)
+            
+            if (storageError) {
+              console.error('Storage cleanup failed:', storageError)
+              // Non-fatal: show alert but don't block navigation
+              setTimeout(() => {
+                alert('Intake deleted; some media cleanup failed. Files may need manual removal from storage.')
+              }, 100)
+            }
+          } catch (cleanupErr: any) {
+            console.error('Storage cleanup error:', cleanupErr)
             // Non-fatal: show alert but don't block navigation
             setTimeout(() => {
-              alert('Intake deleted; some media cleanup failed. Files may need manual removal from storage.')
+              alert('Intake deleted; media cleanup failed. Files may need manual removal from storage.')
             }, 100)
           }
-        } catch (cleanupErr: any) {
-          console.error('Storage cleanup error:', cleanupErr)
-          // Non-fatal: show alert but don't block navigation
-          setTimeout(() => {
-            alert('Intake deleted; media cleanup failed. Files may need manual removal from storage.')
-          }, 100)
-        }
+        })()
       }
     } catch (err: any) {
       const errorMessage = err.message || 'An unexpected error occurred while deleting the intake'

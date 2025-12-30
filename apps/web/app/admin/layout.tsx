@@ -28,31 +28,31 @@ export default async function AdminLayout({
   
   return (
     <div className="min-h-screen bg-[#09090b]">
-      <nav className="sticky top-0 z-[100] pointer-events-auto border-b border-[#27272a] glass-strong bg-[#09090b]">
+      <nav className="sticky top-0 z-[1000] isolate pointer-events-auto border-b border-[#27272a] glass-strong bg-[#09090b]">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <Link href="/admin" className="text-xl font-bold text-white hover:text-white/80 transition-colors">
               Admin - coins.gov.technology
             </Link>
             <div className="flex items-center gap-4">
-              <Link href="/admin/intakes">
-                <Button variant="ghost" className="hover:bg-white/10">Intakes</Button>
-              </Link>
-              <Link href="/admin/sources">
-                <Button variant="ghost" className="hover:bg-white/10">Sources</Button>
-              </Link>
-              <Link href="/admin/orders">
-                <Button variant="ghost" className="hover:bg-white/10">Orders</Button>
-              </Link>
-              <Link href="/admin/grading-services">
-                <Button variant="ghost" className="hover:bg-white/10">Grading Services</Button>
-              </Link>
-              <Link href="/admin/grading-ship-policies">
-                <Button variant="ghost" className="hover:bg-white/10">Ship Policies</Button>
-              </Link>
-              <Link href="/admin/grade-multipliers">
-                <Button variant="ghost" className="hover:bg-white/10">Grade Multipliers</Button>
-              </Link>
+              <Button asChild variant="ghost" className="hover:bg-white/10">
+                <Link href="/admin/intakes">Intakes</Link>
+              </Button>
+              <Button asChild variant="ghost" className="hover:bg-white/10">
+                <Link href="/admin/sources">Sources</Link>
+              </Button>
+              <Button asChild variant="ghost" className="hover:bg-white/10">
+                <Link href="/admin/orders">Orders</Link>
+              </Button>
+              <Button asChild variant="ghost" className="hover:bg-white/10">
+                <Link href="/admin/grading-services">Grading Services</Link>
+              </Button>
+              <Button asChild variant="ghost" className="hover:bg-white/10">
+                <Link href="/admin/grading-ship-policies">Ship Policies</Link>
+              </Button>
+              <Button asChild variant="ghost" className="hover:bg-white/10">
+                <Link href="/admin/grade-multipliers">Grade Multipliers</Link>
+              </Button>
               <form action="/admin/logout" method="post">
                 <Button type="submit" variant="outline" className="border-[#27272a] hover:border-white/30 hover:bg-white/10">Logout</Button>
               </form>
