@@ -434,12 +434,12 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
           <div>
-            <Label>Obverse</Label>
+            <Label>Front</Label>
             {obverseImage ? (
               <div className="mt-2 aspect-square relative bg-muted rounded overflow-hidden">
                 <img
                   src={getImageUrl(obverseImage.storage_path)}
-                  alt="Obverse"
+                  alt="Front"
                   className="object-cover w-full h-full"
                 />
               </div>
@@ -454,12 +454,12 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
             )}
           </div>
           <div>
-            <Label>Reverse</Label>
+            <Label>Back</Label>
             {reverseImage ? (
               <div className="mt-2 aspect-square relative bg-muted rounded overflow-hidden">
                 <img
                   src={getImageUrl(reverseImage.storage_path)}
-                  alt="Reverse"
+                  alt="Back"
                   className="object-cover w-full h-full"
                 />
               </div>
@@ -501,6 +501,9 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
                   <SelectItem value="dollar">Dollar</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                The coin's face value (penny = 1 cent, nickel = 5 cents, dime = 10 cents, etc.)
+              </p>
             </div>
             <div>
               <Label>Year (required)</Label>
@@ -509,13 +512,20 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
                 value={attribution.year || ''}
                 onChange={(e) => setAttribution({ ...attribution, year: parseInt(e.target.value) || null })}
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                The year the coin was minted (usually found on the front of the coin)
+              </p>
             </div>
             <div>
               <Label>Mintmark</Label>
               <Input
                 value={attribution.mintmark || ''}
                 onChange={(e) => setAttribution({ ...attribution, mintmark: e.target.value })}
+                placeholder="e.g., P, D, S, W, CC"
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                The letter indicating where the coin was minted (P = Philadelphia, D = Denver, S = San Francisco, W = West Point, CC = Carson City). Leave blank if no mintmark.
+              </p>
             </div>
             <div>
               <Label>Series</Label>
@@ -524,13 +534,20 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
                 onChange={(e) => setAttribution({ ...attribution, series: e.target.value })}
                 placeholder="e.g., Morgan Dollar, Peace Dollar, Washington Quarter"
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                The coin's design series or type (helps identify specific coin designs)
+              </p>
             </div>
             <div>
               <Label>Grade</Label>
               <Input
                 value={attribution.grade || ''}
                 onChange={(e) => setAttribution({ ...attribution, grade: e.target.value })}
+                placeholder="e.g., MS65, AU, VF"
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                The coin's condition rating. Common grades: MS (Mint State, e.g., MS60, MS65, MS70), AU (About Uncirculated), XF/EF (Extremely Fine), VF (Very Fine)
+              </p>
             </div>
           </div>
           <div>

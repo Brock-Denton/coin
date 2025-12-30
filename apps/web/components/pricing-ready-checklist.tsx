@@ -74,13 +74,13 @@ export function PricingReadyChecklist({ intake }: PricingReadyChecklistProps) {
             <div className="text-sm text-muted-foreground">
               {hasPhotos ? (
                 <>
-                  {hasObverse && hasReverse ? 'Both obverse and reverse photos' : 
-                   hasObverse ? 'Obverse photo only' :
-                   hasReverse ? 'Reverse photo only' :
+                  {hasObverse && hasReverse ? 'Both front and back photos' : 
+                   hasObverse ? 'Front photo only' :
+                   hasReverse ? 'Back photo only' :
                    'Photos uploaded'}
                 </>
               ) : (
-                'Upload at least one photo (obverse or reverse)'
+                'Upload at least one photo (front or back)'
               )}
             </div>
           </div>
