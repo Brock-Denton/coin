@@ -18,3 +18,4 @@ ON CONFLICT (sku) DO NOTHING;
 
 -- Note: This placeholder will be filtered out in application code when real products exist
 
+

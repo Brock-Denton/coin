@@ -70,3 +70,4 @@ AND NOT EXISTS (
   AND sr.rule_value = keywords.rule_value
 );
 
+

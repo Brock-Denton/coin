@@ -16,3 +16,4 @@ COMMENT ON COLUMN valuations.price_cents_median IS 'Fair market mid (50th percen
 COMMENT ON COLUMN valuations.price_cents_p60 IS 'Fair market high (60th percentile)';
 COMMENT ON COLUMN valuations.price_cents_p80 IS 'Premium price (80th percentile)';
 
+

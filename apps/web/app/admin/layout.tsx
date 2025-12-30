@@ -44,6 +44,15 @@ export default async function AdminLayout({
               <Link href="/admin/orders">
                 <Button variant="ghost" className="hover:bg-white/10">Orders</Button>
               </Link>
+              <Link href="/admin/grading-services">
+                <Button variant="ghost" className="hover:bg-white/10">Grading Services</Button>
+              </Link>
+              <Link href="/admin/grading-ship-policies">
+                <Button variant="ghost" className="hover:bg-white/10">Ship Policies</Button>
+              </Link>
+              <Link href="/admin/grade-multipliers">
+                <Button variant="ghost" className="hover:bg-white/10">Grade Multipliers</Button>
+              </Link>
               <form action="/admin/logout" method="post">
                 <Button type="submit" variant="outline" className="border-[#27272a] hover:border-white/30 hover:bg-white/10">Logout</Button>
               </form>

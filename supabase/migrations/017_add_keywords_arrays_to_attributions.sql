@@ -15,3 +15,4 @@ CREATE INDEX IF NOT EXISTS idx_attributions_keywords_include ON attributions USI
 CREATE INDEX IF NOT EXISTS idx_attributions_keywords_exclude ON attributions USING GIN (keywords_exclude)
   WHERE keywords_exclude IS NOT NULL AND array_length(keywords_exclude, 1) > 0;
 
+

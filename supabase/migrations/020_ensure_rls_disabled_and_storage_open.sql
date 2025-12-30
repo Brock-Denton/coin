@@ -61,3 +61,4 @@ CREATE POLICY "Anyone can delete coin-media"
 ON storage.objects FOR DELETE
 USING (bucket_id = 'coin-media');
 
+

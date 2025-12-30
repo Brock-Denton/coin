@@ -97,3 +97,4 @@ CREATE TRIGGER trigger_update_status_on_valuation
   FOR EACH ROW
   EXECUTE FUNCTION public.update_intake_status();
 
+

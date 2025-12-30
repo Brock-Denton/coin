@@ -38,3 +38,4 @@ ALTER TABLE valuations
 CREATE INDEX IF NOT EXISTS idx_price_points_external_id ON price_points(external_id)
   WHERE external_id IS NOT NULL;
 
+

@@ -55,3 +55,4 @@ CREATE TRIGGER update_manual_search_results_updated_at BEFORE UPDATE ON manual_s
 -- ============================================================================
 ALTER TABLE manual_search_results DISABLE ROW LEVEL SECURITY;
 
+

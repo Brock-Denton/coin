@@ -14,18 +14,24 @@ interface JobStatusProps {
   jobs: any[]
   pricePoints?: any[] // Optional: for detecting "no results" scenarios
   onRefresh?: () => void
+  jobType?: string // Optional: filter by job type ('pricing' or 'grading')
 }
 
-export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobStatusProps) {
+export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh, jobType }: JobStatusProps) {
   const [currentJobs, setCurrentJobs] = useState(jobs)
   const [isPolling, setIsPolling] = useState(false)
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null)
   const supabase = createClient()
 
-  // Initialize jobs from props
+  // Filter jobs by jobType if provided
+  const filteredJobs = jobType 
+    ? jobs.filter((job: any) => job.job_type === jobType)
+    : jobs
+
+  // Initialize jobs from filtered props
   useEffect(() => {
-    setCurrentJobs(jobs)
-  }, [jobs])
+    setCurrentJobs(filteredJobs)
+  }, [filteredJobs])
 
   // Poll for job updates every 3 seconds if there are pending/running jobs
   useEffect(() => {
@@ -40,10 +46,16 @@ export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobSt
 
     setIsPolling(true)
     const interval = setInterval(async () => {
-      const { data: updatedJobs } = await supabase
+      let query = supabase
         .from('scrape_jobs')
         .select('*, sources(name)')
         .eq('intake_id', intakeId)
+      
+      if (jobType) {
+        query = query.eq('job_type', jobType)
+      }
+      
+      const { data: updatedJobs } = await query
         .order('created_at', { ascending: false })
       
       if (updatedJobs) {
@@ -61,7 +73,7 @@ export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobSt
     }, 3000)
 
     return () => clearInterval(interval)
-  }, [intakeId, currentJobs.length, supabase, onRefresh])
+  }, [intakeId, currentJobs.length, supabase, onRefresh, jobType])
 
   const getStatusBadge = (status: string) => {
     switch (status) {

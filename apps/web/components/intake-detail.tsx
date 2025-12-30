@@ -15,16 +15,22 @@ import { SearchQueries } from '@/components/search-queries'
 import { JobStatus } from '@/components/job-status'
 import { PricingReadyChecklist } from '@/components/pricing-ready-checklist'
 import { PricingSummaryPanel } from '@/components/pricing-summary-panel'
+import { GradeEstimatePanel } from '@/components/grade-estimate-panel'
+import { GradingRecommendationsTable } from '@/components/grading-recommendations-table'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Trash2, RefreshCw } from 'lucide-react'
+import { Trash2, RefreshCw, Sparkles } from 'lucide-react'
 
 interface IntakeDetailProps {
   intake: any
   pricePoints: any[]
   jobs: any[]
+  gradeEstimates?: any[]
+  gradingRecommendations?: any[]
+  gradingServices?: any[]
+  shipPolicies?: any[]
 }
 
-export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
+export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradingRecommendations, gradingServices = [], shipPolicies = [] }: IntakeDetailProps) {
   const [loading, setLoading] = useState(false)
   // Initialize attribution with keywords as strings for UI
   const initialAttribution = intake.attributions?.[0] || {}
@@ -45,8 +51,22 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
   const [deleting, setDeleting] = useState(false)
   const [pricingMode, setPricingMode] = useState<'ebay_only' | 'all_sources'>('ebay_only')
   const [pricingMessage, setPricingMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [gradingMessage, setGradingMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [gradingLoading, setGradingLoading] = useState(false)
   const router = useRouter()
   const supabase = createClient()
+  
+  // Get latest grade estimate and recommendations
+  const latestGradeEstimate = (gradeEstimates && gradeEstimates.length > 0) 
+    ? gradeEstimates[0] 
+    : (intake.grade_estimates && intake.grade_estimates.length > 0) 
+      ? intake.grade_estimates[0] 
+      : null
+  const gradingRecs = (gradingRecommendations && gradingRecommendations.length > 0)
+    ? gradingRecommendations
+    : (intake.grading_recommendations && intake.grading_recommendations.length > 0)
+      ? intake.grading_recommendations
+      : []
   
   const handleRunPricing = async () => {
     setLoading(true)
@@ -261,6 +281,43 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       setPricingMessage({ type: 'error', text: `Error: ${err.message}` })
     } finally {
       setLoading(false)
+    }
+  }
+  
+  const handleRunGrading = async () => {
+    setGradingLoading(true)
+    setGradingMessage(null)
+    try {
+      // Check for existing active grading jobs
+      const gradingJobs = jobs.filter((j: any) => j.job_type === 'grading')
+      const activeGradingJobs = gradingJobs.filter((j: any) => j.status === 'pending' || j.status === 'running')
+      
+      if (activeGradingJobs.length > 0) {
+        setGradingMessage({ type: 'error', text: `Cannot queue: ${activeGradingJobs.length} active grading job(s) already exist. Wait for them to complete.` })
+        setGradingLoading(false)
+        return
+      }
+      
+      // Call enqueue_grading_job RPC
+      const { data, error } = await supabase.rpc('enqueue_grading_job', {
+        p_intake_id: intake.id
+      })
+      
+      if (error) {
+        setGradingMessage({ type: 'error', text: `Error: ${error.message}` })
+      } else {
+        const createdCount = data || 0
+        if (createdCount === 0) {
+          setGradingMessage({ type: 'error', text: 'No job created. A pending grading job may already exist.' })
+        } else {
+          setGradingMessage({ type: 'success', text: 'Successfully queued grading job' })
+          router.refresh()
+        }
+      }
+    } catch (err: any) {
+      setGradingMessage({ type: 'error', text: `Error: ${err.message}` })
+    } finally {
+      setGradingLoading(false)
     }
   }
   
@@ -482,6 +539,54 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       
       {/* Pricing Summary Panel */}
       <PricingSummaryPanel valuation={intake.valuations?.[0]} pricePoints={pricePoints} />
+      
+      {/* AI Pre-Grade Section */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5" />
+                AI Pre-Grade
+              </CardTitle>
+              <CardDescription>Analyze coin images to estimate grade distribution and ROI for grading submission</CardDescription>
+            </div>
+            <Button onClick={handleRunGrading} disabled={gradingLoading}>
+              {gradingLoading ? 'Queuing...' : 'Run AI Pre-Grade'}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Grading Message */}
+          {gradingMessage && (
+            <div className={`p-3 rounded-lg ${gradingMessage.type === 'success' ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-900 dark:text-green-100' : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'}`}>
+              {gradingMessage.text}
+            </div>
+          )}
+          
+          {/* Grading Job Status */}
+          <JobStatus 
+            intakeId={intake.id} 
+            jobs={jobs} 
+            onRefresh={() => router.refresh()} 
+            jobType="grading"
+          />
+          
+          {/* Grade Estimate Panel */}
+          {latestGradeEstimate && (
+            <GradeEstimatePanel gradeEstimate={latestGradeEstimate} />
+          )}
+        </CardContent>
+      </Card>
+      
+      {/* Grading Recommendations */}
+      {gradingRecs.length > 0 && (
+        <GradingRecommendationsTable 
+          recommendations={gradingRecs}
+          services={gradingServices}
+          shipPolicies={shipPolicies}
+        />
+      )}
       
       {/* Images */}
       <Card>

@@ -16,7 +16,9 @@ export default async function IntakeDetailPage(props: IntakeDetailPageProps) {
       *,
       coin_media(*),
       attributions(*),
-      valuations(*)
+      valuations(*),
+      grade_estimates(*),
+      grading_recommendations(*)
     `)
     .eq('id', params.id)
     .single()
@@ -39,14 +41,31 @@ export default async function IntakeDetailPage(props: IntakeDetailPageProps) {
     .eq('intake_id', params.id)
     .order('created_at', { ascending: false })
   
+  // Get grading services and ship policies for recommendations table
+  const { data: gradingServices } = await supabase
+    .from('grading_services')
+    .select('*')
+    .eq('enabled', true)
+    .order('name', { ascending: true })
+  
+  const { data: shipPolicies } = await supabase
+    .from('grading_ship_policies')
+    .select('*')
+    .order('name', { ascending: true })
+  
   return (
     <IntakeDetail
       intake={intake}
       pricePoints={pricePoints || []}
       jobs={jobs || []}
+      gradeEstimates={intake.grade_estimates}
+      gradingRecommendations={intake.grading_recommendations}
+      gradingServices={gradingServices || []}
+      shipPolicies={shipPolicies || []}
     />
   )
 }
+
 
 
 

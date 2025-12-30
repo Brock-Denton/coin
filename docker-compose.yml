@@ -1,6 +1,21 @@
 version: '3.8'
 
 services:
+  grader:
+    build:
+      context: ./services/grader
+      dockerfile: Dockerfile
+    container_name: coin_grader
+    restart: unless-stopped
+    env_file:
+      - ./services/grader/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - grader_logs:/app/logs
+    networks:
+      - coin_network
+
   worker:
     build:
       context: ./services/worker
@@ -38,3 +53,4 @@ networks:
 volumes:
   worker_cache:
   worker_logs:
+  grader_logs:

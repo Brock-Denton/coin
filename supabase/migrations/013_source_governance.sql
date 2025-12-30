@@ -18,3 +18,4 @@ CREATE INDEX IF NOT EXISTS idx_sources_paused_until ON sources(paused_until)
 CREATE INDEX IF NOT EXISTS idx_sources_enabled ON sources(enabled)
   WHERE enabled = true;
 
+
