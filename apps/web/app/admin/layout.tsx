@@ -28,7 +28,7 @@ export default async function AdminLayout({
   
   return (
     <div className="min-h-screen bg-[#09090b]">
-      <nav className="border-b border-[#27272a] glass-strong">
+      <nav className="sticky top-0 z-[100] pointer-events-auto border-b border-[#27272a] glass-strong bg-[#09090b]">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <Link href="/admin" className="text-xl font-bold text-white hover:text-white/80 transition-colors">
@@ -60,7 +60,7 @@ export default async function AdminLayout({
           </div>
         </div>
       </nav>
-      <main className="container mx-auto px-4 py-8 text-white">
+      <main className="relative z-0 container mx-auto px-4 py-8 text-white">
         {children}
       </main>
     </div>

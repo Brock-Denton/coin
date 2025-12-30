@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, startTransition } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -491,12 +491,15 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   
   const handleDeleteIntake = async () => {
     setDeleting(true)
+    const intakeId = intake.id
+    const storagePaths: string[] = []
+    
     try {
       // Check for linked products first (helpful UX feedback)
       const { data: linkedProducts } = await supabase
         .from('products')
         .select('id, title, status')
-        .eq('intake_id', intake.id)
+        .eq('intake_id', intakeId)
         .limit(1)
       
       if (linkedProducts && linkedProducts.length > 0) {
@@ -508,28 +511,73 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         }
       }
       
-      // Delete the intake (Supabase handles its own timeouts)
-      const { error } = await supabase
+      // Collect storage paths for cleanup (before deletion)
+      const { data: mediaFiles } = await supabase
+        .from('coin_media')
+        .select('storage_path')
+        .eq('intake_id', intakeId)
+      
+      if (mediaFiles) {
+        storagePaths.push(...mediaFiles.map((m: any) => m.storage_path).filter(Boolean))
+      }
+      
+      // Step 1: Delete the intake row from coin_intakes first
+      const { error, data } = await supabase
         .from('coin_intakes')
         .delete()
-        .eq('id', intake.id)
+        .eq('id', intakeId)
+        .select()
       
-      if (error) {
-        // Provide more specific error messages
+      // Step 2: Treat success OR "not found/already deleted" as success
+      // No error = success; empty data array = already deleted (also success)
+      const isSuccess = !error || error.code === 'PGRST116' || error.message?.toLowerCase().includes('not found') || (data && Array.isArray(data) && data.length === 0)
+      
+      if (!isSuccess) {
+        // Only throw for real errors (like foreign key constraints)
         if (error.code === '23503') {
           throw new Error('Cannot delete intake: it is still referenced by other records. Please remove all references first.')
         }
         throw error
       }
       
-      // Success - close dialog and redirect
+      // Step 3: Immediately navigate away (wrapped in startTransition to avoid state/route conflicts)
       setDeleteDialogOpen(false)
-      // Use router.replace to ensure navigation happens (replaces current history entry)
-      router.replace('/admin/intakes')
+      startTransition(() => {
+        router.replace('/admin/intakes')
+        router.refresh()
+      })
+      
+      // Step 4: Perform storage cleanup as best-effort AFTER navigation is triggered
+      if (storagePaths.length > 0) {
+        try {
+          const { error: storageError } = await supabase.storage
+            .from('coin-media')
+            .remove(storagePaths)
+          
+          if (storageError) {
+            console.error('Storage cleanup failed:', storageError)
+            // Non-fatal: show alert but don't block navigation
+            setTimeout(() => {
+              alert('Intake deleted; some media cleanup failed. Files may need manual removal from storage.')
+            }, 100)
+          }
+        } catch (cleanupErr: any) {
+          console.error('Storage cleanup error:', cleanupErr)
+          // Non-fatal: show alert but don't block navigation
+          setTimeout(() => {
+            alert('Intake deleted; media cleanup failed. Files may need manual removal from storage.')
+          }, 100)
+        }
+      }
     } catch (err: any) {
       const errorMessage = err.message || 'An unexpected error occurred while deleting the intake'
       alert(`Error deleting intake: ${errorMessage}`)
       setDeleting(false)
+      setDeleteDialogOpen(false)
+    } finally {
+      // Step 5: Always clear UI state
+      setDeleting(false)
+      setDeleteDialogOpen(false)
     }
   }
 
