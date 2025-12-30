@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 
 interface PricingReadyChecklistProps {
   intake: {
-    coin_media?: Array<{ media_type: string }>
+    coin_media?: Array<{ kind?: string; media_type: string }>
     attributions?: Array<{
       year?: number | null
       denomination?: string | null
@@ -25,8 +25,8 @@ export function PricingReadyChecklist({ intake }: PricingReadyChecklistProps) {
   
   // Check 1: Photos present (at least one photo)
   const hasPhotos = images.length > 0
-  const hasObverse = images.some((img: any) => img.media_type === 'obverse')
-  const hasReverse = images.some((img: any) => img.media_type === 'reverse')
+  const hasObverse = images.some((img: any) => img.kind === 'obverse' || img.media_type === 'obverse')
+  const hasReverse = images.some((img: any) => img.kind === 'reverse' || img.media_type === 'reverse')
   
   // Check 2: Attribution complete (has required fields)
   // Helper to check if a value is truthy and not empty string

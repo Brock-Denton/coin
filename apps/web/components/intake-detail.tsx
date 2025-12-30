@@ -472,8 +472,8 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   
   const valuation = intake.valuations?.[0]
   const images = intake.coin_media || []
-  const obverseImage = images.find((img: any) => img.kind === 'obverse')
-  const reverseImage = images.find((img: any) => img.kind === 'reverse')
+  const obverseImage = images.find((img: any) => img.kind === 'obverse' || img.media_type === 'obverse')
+  const reverseImage = images.find((img: any) => img.kind === 'reverse' || img.media_type === 'reverse')
   
   return (
     <div className="space-y-8">

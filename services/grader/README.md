@@ -64,19 +64,34 @@ Future model versions can be added by implementing new estimator classes and upd
 6. Grader computes recommendations for each grading service
 7. Results stored in database and displayed on intake detail page
 
-## Smoke Testing
+## Post-Migration Verification
 
-To verify the grader service can process images:
+After applying migrations through 031, verify the system works correctly:
 
-1. **Verify coin_media schema**: Ensure `coin_media` rows have the `kind` column set to 'obverse', 'reverse', or 'edge'. The `media_type` should be 'photo' for images.
+1. **Apply migrations**: Ensure migration 031 is applied to add `coin_media.kind` column and update constraints.
 
-2. **Check grading job sees images**:
+2. **Upload test images**:
+   - Upload obverse and reverse images for a test intake
+   - Verify database rows have:
+     - `media_type='photo'`
+     - `kind='obverse'` and `kind='reverse'`
+     - Unique constraint allows one of each kind per intake
+
+3. **Check Pricing Ready Checklist**:
+   - Verify checklist shows "Both front and back photos" as complete
+   - Checklist should detect images by `kind` (with fallback to `media_type` for legacy rows)
+
+4. **Verify job claiming**:
+   - Pricing worker should only claim jobs where `job_type='pricing'`
+   - Grader service should only claim jobs where `job_type='grading'`
+   - Run both job types to confirm isolation
+
+5. **Test grader image detection**:
    - Create a grading job via `enqueue_grading_job(intake_id)` RPC
    - Check grader logs for "Found coin images" message with image count
-   - If no images found, verify:
-     - `coin_media` rows exist for the intake_id
-     - Rows have `kind IN ('obverse', 'reverse', 'edge')` (or `media_type` for legacy data)
-     - Grader service has proper database access
+   - Grader should find images via `kind` column (with fallback to `media_type` for legacy data)
 
-3. **Verify job claiming**: The grader should only claim jobs where `job_type='grading'`. The worker service claims jobs where `job_type='pricing'`.
+6. **Verify backward compatibility**:
+   - Legacy rows with `media_type='obverse'/'reverse'/'edge'` and `kind=NULL` should still work
+   - UI components should detect legacy images via fallback logic
 
