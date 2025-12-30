@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { createClient } from '@/lib/supabase/client'
-import { RefreshCw, CheckCircle2, XCircle, Clock, Loader2, AlertTriangle } from 'lucide-react'
+import { RefreshCw, CheckCircle2, XCircle, Clock, Loader2, AlertTriangle, X } from 'lucide-react'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 
 interface JobStatusProps {
@@ -19,6 +19,7 @@ interface JobStatusProps {
 export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobStatusProps) {
   const [currentJobs, setCurrentJobs] = useState(jobs)
   const [isPolling, setIsPolling] = useState(false)
+  const [cancellingJobId, setCancellingJobId] = useState<string | null>(null)
   const supabase = createClient()
 
   // Initialize jobs from props
@@ -122,7 +123,7 @@ export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobSt
     : 0
 
   const allCompleted = currentJobs.length > 0 && currentJobs.every((job: any) => 
-    job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled'
+    job.status === 'succeeded' || job.status === 'failed'
   )
 
   // Check for succeeded jobs with no price points
@@ -131,6 +132,48 @@ export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobSt
     const jobPricePoints = pricePoints.filter((pp: any) => pp.job_id === job.id)
     return jobPricePoints.length === 0
   })
+
+  const handleCancelJob = async (jobId: string) => {
+    if (!confirm('Are you sure you want to cancel this job?')) {
+      return
+    }
+
+    setCancellingJobId(jobId)
+    try {
+      const { error } = await supabase
+        .from('scrape_jobs')
+        .update({
+          status: 'failed',
+          error_message: 'Job cancelled by user',
+          completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', jobId)
+        .in('status', ['pending', 'running']) // Only allow cancelling pending/running jobs
+
+      if (error) throw error
+
+      // Refresh jobs to show updated status
+      const { data: updatedJobs } = await supabase
+        .from('scrape_jobs')
+        .select('*, sources(name)')
+        .eq('intake_id', intakeId)
+        .order('created_at', { ascending: false })
+
+      if (updatedJobs) {
+        setCurrentJobs(updatedJobs)
+      }
+
+      if (onRefresh) {
+        onRefresh()
+      }
+    } catch (err: any) {
+      console.error('Error cancelling job:', err)
+      alert(`Failed to cancel job: ${err.message}`)
+    } finally {
+      setCancellingJobId(null)
+    }
+  }
 
   if (currentJobs.length === 0) {
     return null
@@ -170,30 +213,47 @@ export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh }: JobSt
 
         {/* Job List */}
         <div className="space-y-2">
-          {currentJobs.map((job: any) => (
-            <div key={job.id} className="flex items-center justify-between p-3 border rounded-lg">
-              <div className="flex items-center gap-3">
-                {getStatusIcon(job.status)}
-                <div>
-                  <div className="font-medium">{job.sources?.name || 'Unknown Source'}</div>
-                  {job.error_message && (
-                    <div className="text-sm text-red-600 mt-1">{job.error_message}</div>
-                  )}
-                  {job.started_at && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Started: {new Date(job.started_at).toLocaleString()}
-                    </div>
-                  )}
-                  {job.completed_at && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Completed: {new Date(job.completed_at).toLocaleString()}
-                    </div>
+          {currentJobs.map((job: any) => {
+            const canCancel = (job.status === 'pending' || job.status === 'running') && !cancellingJobId
+            return (
+              <div key={job.id} className="flex items-center justify-between p-3 border rounded-lg">
+                <div className="flex items-center gap-3">
+                  {getStatusIcon(job.status)}
+                  <div>
+                    <div className="font-medium">{job.sources?.name || 'Unknown Source'}</div>
+                    {job.error_message && (
+                      <div className="text-sm text-red-600 mt-1">{job.error_message}</div>
+                    )}
+                    {job.started_at && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Started: {new Date(job.started_at).toLocaleString()}
+                      </div>
+                    )}
+                    {job.completed_at && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Completed: {new Date(job.completed_at).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {getStatusBadge(job.status)}
+                  {canCancel && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCancelJob(job.id)}
+                      disabled={cancellingJobId === job.id}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                    >
+                      <X className="h-3 w-3 mr-1" />
+                      {cancellingJobId === job.id ? 'Cancelling...' : 'Cancel'}
+                    </Button>
                   )}
                 </div>
               </div>
-              {getStatusBadge(job.status)}
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         {/* Timeout Warning */}
