@@ -1,7 +1,6 @@
 // import { redirect } from 'next/navigation'
 // import { createClient } from '@/lib/supabase/server'
-import Link from 'next/link'
-import { Button } from '@/components/ui/button'
+import { AdminTopNav } from '@/components/admin/admin-top-nav'
 
 export default async function AdminLayout({
   children,
@@ -28,36 +27,9 @@ export default async function AdminLayout({
   
   return (
     <div className="min-h-screen bg-[#09090b]">
-      <nav className="sticky top-0 z-[1000] isolate pointer-events-auto border-b border-[#27272a] glass-strong bg-[#09090b]">
+      <nav className="sticky top-0 z-[100] pointer-events-auto border-b border-[#27272a] glass-strong bg-[#09090b]">
         <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <Link href="/admin" className="text-xl font-bold text-white hover:text-white/80 transition-colors">
-              Admin - coins.gov.technology
-            </Link>
-            <div className="flex items-center gap-4">
-              <Button asChild variant="ghost" className="hover:bg-white/10">
-                <Link href="/admin/intakes">Intakes</Link>
-              </Button>
-              <Button asChild variant="ghost" className="hover:bg-white/10">
-                <Link href="/admin/sources">Sources</Link>
-              </Button>
-              <Button asChild variant="ghost" className="hover:bg-white/10">
-                <Link href="/admin/orders">Orders</Link>
-              </Button>
-              <Button asChild variant="ghost" className="hover:bg-white/10">
-                <Link href="/admin/grading-services">Grading Services</Link>
-              </Button>
-              <Button asChild variant="ghost" className="hover:bg-white/10">
-                <Link href="/admin/grading-ship-policies">Ship Policies</Link>
-              </Button>
-              <Button asChild variant="ghost" className="hover:bg-white/10">
-                <Link href="/admin/grade-multipliers">Grade Multipliers</Link>
-              </Button>
-              <form action="/admin/logout" method="post">
-                <Button type="submit" variant="outline" className="border-[#27272a] hover:border-white/30 hover:bg-white/10">Logout</Button>
-              </form>
-            </div>
-          </div>
+          <AdminTopNav />
         </div>
       </nav>
       <main className="relative z-0 container mx-auto px-4 py-8 text-white">
