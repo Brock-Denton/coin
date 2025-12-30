@@ -139,8 +139,10 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       
       if (showAlert) {
         alert('Attribution saved successfully')
+        router.refresh()
       }
-      router.refresh()
+      // Note: router.refresh() only called when showAlert=true (manual save)
+      // Auto-save doesn't refresh to avoid blocking navigation
     } catch (err: any) {
       if (showAlert) {
         alert(`Error: ${err.message}`)
@@ -522,8 +524,8 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       
       // Success - close dialog and redirect
       setDeleteDialogOpen(false)
-      router.push('/admin/intakes')
-      router.refresh()
+      // Use router.replace to ensure navigation happens (replaces current history entry)
+      router.replace('/admin/intakes')
     } catch (err: any) {
       const errorMessage = err.message || 'An unexpected error occurred while deleting the intake'
       alert(`Error deleting intake: ${errorMessage}`)
