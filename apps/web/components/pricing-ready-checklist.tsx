@@ -29,10 +29,15 @@ export function PricingReadyChecklist({ intake }: PricingReadyChecklistProps) {
   const hasReverse = images.some((img: any) => img.media_type === 'reverse')
   
   // Check 2: Attribution complete (has required fields)
-  const hasYear = !!attribution?.year
-  const hasDenomination = !!attribution?.denomination
+  // Helper to check if a value is truthy and not empty string
+  const hasValue = (value: any): boolean => {
+    return value != null && value !== ''
+  }
+  
+  const hasYear = hasValue(attribution?.year) && Number(attribution?.year) > 0
+  const hasDenomination = hasValue(attribution?.denomination)
   const hasMintmark = !!attribution?.mintmark || true // Mintmark can be blank (P mint)
-  const hasSeriesOrTitle = !!(attribution?.series || attribution?.title)
+  const hasSeriesOrTitle = hasValue(attribution?.series) || hasValue(attribution?.title)
   const attributionComplete = hasYear && hasDenomination && hasSeriesOrTitle
   
   // Check 3: Valuation exists

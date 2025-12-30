@@ -248,16 +248,29 @@ export function IntakeDetail({ intake, pricePoints, jobs }: IntakeDetailProps) {
       const keywordsIncludeArray = normalizeKeywords(attribution.keywords_include_string || '')
       const keywordsExcludeArray = normalizeKeywords(attribution.keywords_exclude_string || '')
 
+      // Helper function to convert empty strings to null
+      const nullIfEmpty = (value: any): any => {
+        if (value === '' || value === undefined) return null
+        return value
+      }
+
+      // Helper function to ensure year is a number or null
+      const normalizeYear = (year: any): number | null => {
+        if (!year && year !== 0) return null
+        const num = Number(year)
+        return isNaN(num) ? null : num
+      }
+
       const attributionData: any = {
         intake_id: intake.id,
-        year: attribution.year || null,
-        mintmark: attribution.mintmark || null,
-        denomination: attribution.denomination || null,
-        series: attribution.series || null,
-        variety: attribution.variety || null,
-        grade: attribution.grade || null,
-        title: attribution.title || null,
-        notes: attribution.notes || null,
+        year: normalizeYear(attribution.year),
+        mintmark: nullIfEmpty(attribution.mintmark),
+        denomination: nullIfEmpty(attribution.denomination),
+        series: nullIfEmpty(attribution.series),
+        variety: nullIfEmpty(attribution.variety),
+        grade: nullIfEmpty(attribution.grade),
+        title: nullIfEmpty(attribution.title),
+        notes: nullIfEmpty(attribution.notes),
         keywords_include: keywordsIncludeArray,
         keywords_exclude: keywordsExcludeArray,
       }
