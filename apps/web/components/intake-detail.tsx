@@ -61,6 +61,15 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   const hasUnsavedChanges = useRef(false)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isInitialMount = useRef(true)
+  // Track the latest attribution state in a ref so saveAttribution can access it
+  const attributionRef = useRef(attribution)
+  // Track the last saved state to compare against (updated after each save)
+  const savedAttributionRef = useRef(attribution)
+  
+  // Keep attributionRef in sync with attribution state
+  useEffect(() => {
+    attributionRef.current = attribution
+  }, [attribution])
   
   // Normalize keywords from comma-separated string to array
   const normalizeKeywords = (keywordsString: string): string[] => {
@@ -73,10 +82,13 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
 
   // Extract save logic into reusable function
   const saveAttribution = async (showAlert = false) => {
+    // Use ref to get latest attribution state (not closure)
+    const currentAttribution = attributionRef.current
+    
     try {
       // Normalize keywords from comma-separated strings to arrays
-      const keywordsIncludeArray = normalizeKeywords(attribution.keywords_include_string || '')
-      const keywordsExcludeArray = normalizeKeywords(attribution.keywords_exclude_string || '')
+      const keywordsIncludeArray = normalizeKeywords(currentAttribution.keywords_include_string || '')
+      const keywordsExcludeArray = normalizeKeywords(currentAttribution.keywords_exclude_string || '')
 
       // Helper function to convert empty strings to null
       const nullIfEmpty = (value: any): any => {
@@ -93,24 +105,25 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
 
       const attributionData: any = {
         intake_id: intake.id,
-        year: normalizeYear(attribution.year),
-        mintmark: nullIfEmpty(attribution.mintmark),
-        denomination: nullIfEmpty(attribution.denomination),
-        series: nullIfEmpty(attribution.series),
-        variety: nullIfEmpty(attribution.variety),
-        grade: nullIfEmpty(attribution.grade),
-        title: nullIfEmpty(attribution.title),
-        notes: nullIfEmpty(attribution.notes),
+        year: normalizeYear(currentAttribution.year),
+        mintmark: nullIfEmpty(currentAttribution.mintmark),
+        denomination: nullIfEmpty(currentAttribution.denomination),
+        series: nullIfEmpty(currentAttribution.series),
+        variety: nullIfEmpty(currentAttribution.variety),
+        grade: nullIfEmpty(currentAttribution.grade),
+        title: nullIfEmpty(currentAttribution.title),
+        notes: nullIfEmpty(currentAttribution.notes),
         keywords_include: keywordsIncludeArray,
         keywords_exclude: keywordsExcludeArray,
       }
 
-      if (attribution.id) {
+      let newId: string | undefined
+      if (currentAttribution.id) {
         // Update
         const { error } = await supabase
           .from('attributions')
           .update(attributionData)
-          .eq('id', attribution.id)
+          .eq('id', currentAttribution.id)
         
         if (error) throw error
       } else {
@@ -123,18 +136,23 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         
         if (error) throw error
         
-        // Update local state with the new ID
         if (data) {
-          setAttribution({ ...attribution, id: data.id })
+          newId = data.id
         }
       }
       
-      // Update local state to reflect saved keywords as strings
-      setAttribution((prev: typeof attribution) => ({
-        ...prev,
-        keywords_include_string: keywordsIncludeArray.join(', '),
-        keywords_exclude_string: keywordsExcludeArray.join(', '),
-      }))
+      // Update local state to reflect saved keywords and new ID (if created)
+      setAttribution((prev) => {
+        const updated = {
+          ...prev,
+          ...(newId && { id: newId }),
+          keywords_include_string: keywordsIncludeArray.join(', '),
+          keywords_exclude_string: keywordsExcludeArray.join(', '),
+        }
+        // Update saved reference to current state after save
+        savedAttributionRef.current = JSON.parse(JSON.stringify(updated))
+        return updated
+      })
       
       hasUnsavedChanges.current = false
       
@@ -156,23 +174,13 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   useEffect(() => {
     if (isInitialMount.current) {
       isInitialMount.current = false
+      // Initialize saved reference to current state
+      savedAttributionRef.current = JSON.parse(JSON.stringify(attribution))
       return
     }
     
-    // Compare current attribution with initial to detect changes
-    const isChanged = JSON.stringify(attribution) !== JSON.stringify({
-      ...initialAttribution,
-      keywords_include_string: initialAttribution.keywords_include 
-        ? (Array.isArray(initialAttribution.keywords_include) 
-            ? initialAttribution.keywords_include.join(', ') 
-            : initialAttribution.keywords_include)
-        : '',
-      keywords_exclude_string: initialAttribution.keywords_exclude
-        ? (Array.isArray(initialAttribution.keywords_exclude)
-            ? initialAttribution.keywords_exclude.join(', ')
-            : initialAttribution.keywords_exclude)
-        : '',
-    })
+    // Compare current attribution with last saved state (not initial)
+    const isChanged = JSON.stringify(attribution) !== JSON.stringify(savedAttributionRef.current)
     hasUnsavedChanges.current = isChanged
   }, [attribution])
 
