@@ -68,6 +68,15 @@ def get_collector(source: dict):
             logger.error("eBay App ID not found", source_id=source['id'])
             return None
         
+        # Check for placeholder credentials
+        placeholder_patterns = ['your-ebay-app-id', 'your-ebay-cert-id', 'your-ebay-dev-id', 'placeholder', 'example']
+        app_id_lower = app_id.lower()
+        if any(pattern in app_id_lower for pattern in placeholder_patterns):
+            logger.error("eBay App ID appears to be a placeholder value", 
+                        source_id=source['id'], 
+                        app_id=app_id[:20] + '...' if len(app_id) > 20 else app_id)
+            raise Exception(f"eBay App ID is set to a placeholder value ('{app_id}'). Please update the source configuration with your real eBay API credentials.")
+        
         return EbayCollector(
             app_id=app_id, 
             cert_id=cert_id, 
@@ -185,11 +194,27 @@ def process_job(job: dict):
             'source': source['name'],
             'exclude_keywords_count': len(all_exclude_keywords)
         })
-        price_points = collector.collect(query_params, exclude_keywords=all_exclude_keywords)
+        
+        try:
+            price_points = collector.collect(query_params, exclude_keywords=all_exclude_keywords)
+        except Exception as collect_error:
+            error_msg = str(collect_error)
+            # Check if this is an authentication/configuration error
+            if 'authentication failed' in error_msg.lower() or 'invalid application' in error_msg.lower():
+                logger.error("Collection failed due to authentication error", 
+                           job_id=job_id, 
+                           error=error_msg)
+                log_job_event(job_id, 'error', 'Authentication failed', {'error': error_msg})
+                update_job_status(job_id, 'failed', f"eBay API authentication failed. Please check your source configuration. Error: {error_msg}")
+                return
+            # Re-raise other errors to be handled by outer try/except
+            raise
         
         if not price_points:
             logger.warning("No price points collected", job_id=job_id)
             log_job_event(job_id, 'warning', 'No price points collected')
+            # Only mark as succeeded if we didn't get an error (might just be no results)
+            # But if we got here after an exception was caught, we should have already handled it
             update_job_status(job_id, 'succeeded', None)
             return
         

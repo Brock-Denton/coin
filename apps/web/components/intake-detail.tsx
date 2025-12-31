@@ -15,12 +15,13 @@ import Link from 'next/link'
 import { firstOrSelf } from '@/lib/relations'
 import { SearchQueries } from '@/components/search-queries'
 import { JobStatus } from '@/components/job-status'
+import { JobProgressIndicator } from '@/components/job-progress-indicator'
 import { PricingReadyChecklist } from '@/components/pricing-ready-checklist'
 import { PricingSummaryPanel } from '@/components/pricing-summary-panel'
 import { GradeEstimatePanel } from '@/components/grade-estimate-panel'
 import { GradingRecommendationsTable } from '@/components/grading-recommendations-table'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { Trash2, RefreshCw, Sparkles } from 'lucide-react'
+import { Trash2, RefreshCw, Sparkles, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 interface IntakeDetailProps {
   intake: any
@@ -52,9 +53,10 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [pricingMode, setPricingMode] = useState<'ebay_only' | 'all_sources'>('ebay_only')
-  const [pricingMessage, setPricingMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [pricingMessage, setPricingMessage] = useState<{ type: 'success' | 'error' | 'warning' | 'info', text: string } | null>(null)
   const [gradingMessage, setGradingMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [gradingLoading, setGradingLoading] = useState(false)
+  const [workerOnline, setWorkerOnline] = useState<boolean | null>(null)
   const router = useRouter()
   const supabase = createClient()
   
@@ -312,7 +314,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   
   const handleRunPricing = async () => {
     setLoading(true)
-    setPricingMessage(null)
+    setPricingMessage({ type: 'info', text: 'Queuing jobs...' })
     console.log('[handleRunPricing] Starting pricing job enqueue', {
       intakeId: intake.id,
       pricingMode,
@@ -415,7 +417,13 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         if (createdCount === 0) {
           setPricingMessage({ type: 'error', text: 'No jobs created. Pending jobs may already exist for these sources.' })
         } else {
-          setPricingMessage({ type: 'success', text: `Successfully queued ${createdCount} pricing job(s)` })
+          // Check worker availability after queuing
+          const workerAvailable = await checkWorkerAvailability()
+          if (workerAvailable) {
+            setPricingMessage({ type: 'success', text: `${createdCount} job(s) queued! Worker will pick them up in ~5-10 seconds...` })
+          } else {
+            setPricingMessage({ type: 'warning', text: `${createdCount} job(s) queued, but no workers are online. Jobs will remain pending until a worker starts.` })
+          }
           router.refresh()
         }
       }
@@ -526,6 +534,41 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
     }
   }
   
+  // Check worker availability
+  const checkWorkerAvailability = async (): Promise<boolean> => {
+    try {
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+      const { data: workers, error } = await supabase
+        .from('worker_heartbeats')
+        .select('worker_id, last_seen_at')
+        .gt('last_seen_at', twoMinutesAgo)
+        .limit(1)
+      
+      if (error) {
+        console.error('Error checking worker availability:', error)
+        return false
+      }
+      
+      const isOnline = workers && workers.length > 0
+      setWorkerOnline(isOnline)
+      return isOnline
+    } catch (err) {
+      console.error('Error checking worker availability:', err)
+      setWorkerOnline(false)
+      return false
+    }
+  }
+
+  // Check worker availability on mount and periodically
+  useEffect(() => {
+    checkWorkerAvailability()
+    const interval = setInterval(() => {
+      checkWorkerAvailability()
+    }, 30000) // Check every 30 seconds
+    
+    return () => clearInterval(interval)
+  }, [])
+
   const handleRunGrading = async () => {
     setGradingLoading(true)
     setGradingMessage(null)
@@ -825,6 +868,9 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Progress Indicator */}
+          <JobProgressIndicator jobs={jobs} jobType="grading" />
+          
           {/* Grading Message */}
           {gradingMessage && (
             <div className={`p-3 rounded-lg ${gradingMessage.type === 'success' ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-900 dark:text-green-100' : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'}`}>
@@ -1052,20 +1098,72 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
                 </SelectContent>
               </Select>
               <Button onClick={handleRunPricing} disabled={loading}>
-                Run Pricing
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Queuing...
+                  </>
+                ) : (
+                  'Run Pricing'
+                )}
               </Button>
               <Button onClick={handleRerunPricing} disabled={loading} variant="outline">
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Re-run Pricing
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Queuing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Re-run Pricing
+                  </>
+                )}
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Progress Indicator */}
+          <JobProgressIndicator jobs={jobs} />
+          
+          {/* Worker Status */}
+          {workerOnline !== null && (
+            <div className={`p-3 rounded-lg flex items-center gap-2 ${
+              workerOnline 
+                ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-900 dark:text-green-100' 
+                : 'bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 text-yellow-900 dark:text-yellow-100'
+            }`}>
+              {workerOnline ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Worker online - jobs will process automatically</span>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="h-4 w-4" />
+                  <span>No workers online - jobs will remain pending until a worker starts</span>
+                </>
+              )}
+            </div>
+          )}
+          
           {/* Pricing Message */}
           {pricingMessage && (
-            <div className={`p-3 rounded-lg ${pricingMessage.type === 'success' ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-900 dark:text-green-100' : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'}`}>
-              {pricingMessage.text}
+            <div className={`p-3 rounded-lg flex items-center gap-2 ${
+              pricingMessage.type === 'success' 
+                ? 'bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 text-green-900 dark:text-green-100'
+                : pricingMessage.type === 'warning'
+                ? 'bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 text-yellow-900 dark:text-yellow-100'
+                : pricingMessage.type === 'info'
+                ? 'bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-100'
+                : 'bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+            }`}>
+              {pricingMessage.type === 'info' && <Loader2 className="h-4 w-4 animate-spin" />}
+              {pricingMessage.type === 'success' && <CheckCircle2 className="h-4 w-4" />}
+              {pricingMessage.type === 'warning' && <AlertTriangle className="h-4 w-4" />}
+              {pricingMessage.type === 'error' && <AlertTriangle className="h-4 w-4" />}
+              <span>{pricingMessage.text}</span>
             </div>
           )}
           

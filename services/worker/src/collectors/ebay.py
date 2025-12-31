@@ -344,19 +344,36 @@ class EbayCollector(BaseCollector):
             
             # Execute API call - findCompletedItems is available in Finding API
             # This method requires the Finding API which supports completed items
+            auth_error = None
             try:
                 response = api.execute('findCompletedItems', request_params)
             except Exception as api_error:
+                error_str = str(api_error)
+                # Check if this is an authentication error
+                if 'Authentication failed' in error_str or 'Invalid Application' in error_str or 'errorId: 11002' in error_str:
+                    auth_error = api_error
+                    logger.error("eBay API authentication failed", error=error_str)
+                    # Don't try fallback for auth errors - it will also fail
+                    raise Exception(f"eBay API authentication failed: {error_str}. Please check your eBay App ID in the source configuration.")
+                
                 # Fallback: Try findItemsAdvanced with sold filter if findCompletedItems fails
-                logger.warning("findCompletedItems failed, trying alternative method", error=str(api_error))
-                request_params.pop('itemFilter', None)
-                request_params['itemFilter'] = [
-                    {'name': 'ListingType', 'value': ['AuctionWithBIN', 'FixedPrice']},
-                    {'name': 'HideDuplicateItems', 'value': 'true'}
-                ]
-                # Note: findItemsAdvanced doesn't support SoldItemsOnly, so we filter client-side
-                response = api.execute('findItemsAdvanced', request_params)
-                # We'll need to filter for sold items in the results
+                logger.warning("findCompletedItems failed, trying alternative method", error=error_str)
+                try:
+                    request_params.pop('itemFilter', None)
+                    request_params['itemFilter'] = [
+                        {'name': 'ListingType', 'value': ['AuctionWithBIN', 'FixedPrice']},
+                        {'name': 'HideDuplicateItems', 'value': 'true'}
+                    ]
+                    # Note: findItemsAdvanced doesn't support SoldItemsOnly, so we filter client-side
+                    response = api.execute('findItemsAdvanced', request_params)
+                except Exception as fallback_error:
+                    fallback_error_str = str(fallback_error)
+                    # Check if fallback also failed with auth error
+                    if 'Authentication failed' in fallback_error_str or 'Invalid Application' in fallback_error_str or 'errorId: 11002' in fallback_error_str:
+                        logger.error("eBay API authentication failed on fallback", error=fallback_error_str)
+                        raise Exception(f"eBay API authentication failed: {fallback_error_str}. Please check your eBay App ID in the source configuration.")
+                    # Re-raise the original error if fallback also fails
+                    raise api_error
             
             # Parse response
             items = response.dict().get('searchResult', {}).get('item', [])
