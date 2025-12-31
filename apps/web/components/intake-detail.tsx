@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { firstOrSelf } from '@/lib/relations'
 import { SearchQueries } from '@/components/search-queries'
 import { JobStatus } from '@/components/job-status'
 import { PricingReadyChecklist } from '@/components/pricing-ready-checklist'
@@ -34,7 +35,7 @@ interface IntakeDetailProps {
 export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradingRecommendations, gradingServices = [], shipPolicies = [] }: IntakeDetailProps) {
   const [loading, setLoading] = useState(false)
   // Initialize attribution with keywords as strings for UI
-  const initialAttribution = intake.attributions?.[0] || {}
+  const initialAttribution = firstOrSelf(intake?.attributions) || {}
   const [attribution, setAttribution] = useState({
     ...initialAttribution,
     keywords_include_string: initialAttribution.keywords_include 
@@ -95,7 +96,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       }
     }
     
-    const propsAttribution = intake.attributions?.[0] || {}
+    const propsAttribution = firstOrSelf(intake?.attributions) || {}
     const normalizedAttribution = normalizeAttributionFromProps(propsAttribution)
     
     // On initial mount, always sync from props (props are the source of truth)
@@ -730,7 +731,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
     }
   }
   
-  const valuation = intake.valuations?.[0]
+  const valuation = firstOrSelf(intake?.valuations)
   const images = intake.coin_media || []
   const obverseImage = images.find((img: any) => img.kind === 'obverse' || img.media_type === 'obverse')
   const reverseImage = images.find((img: any) => img.kind === 'reverse' || img.media_type === 'reverse')
@@ -805,7 +806,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       />
       
       {/* Pricing Summary Panel */}
-      <PricingSummaryPanel valuation={intake.valuations?.[0]} pricePoints={pricePoints} />
+      <PricingSummaryPanel valuation={firstOrSelf(intake?.valuations)} pricePoints={pricePoints} />
       
       {/* AI Pre-Grade Section */}
       <Card>

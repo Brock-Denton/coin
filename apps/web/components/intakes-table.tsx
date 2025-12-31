@@ -10,6 +10,7 @@ import { BulkPricingDialog } from '@/components/bulk-pricing-dialog'
 import { generateIntakesCSV, downloadCSV } from '@/lib/csv-export'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
+import { firstOrSelf } from '@/lib/relations'
 
 interface Intake {
   id: string
@@ -18,17 +19,26 @@ interface Intake {
   notes?: string
   created_at: string
   updated_at: string
-  attributions?: Array<{
+  attributions?: {
     year?: number | null
     denomination?: string | null
     mintmark?: string | null
     series?: string | null
     grade?: string | null
-  }>
-  valuations?: Array<{
+  } | Array<{
+    year?: number | null
+    denomination?: string | null
+    mintmark?: string | null
+    series?: string | null
+    grade?: string | null
+  }> | null
+  valuations?: {
     price_cents_median?: number | null
     confidence_score?: number
-  }>
+  } | Array<{
+    price_cents_median?: number | null
+    confidence_score?: number
+  }> | null
 }
 
 interface IntakesTableProps {
@@ -260,8 +270,8 @@ export function IntakesTable({ intakes }: IntakesTableProps) {
               </TableRow>
             ) : (
               intakes.map((intake) => {
-                const attribution = intake.attributions?.[0]
-                const valuation = intake.valuations?.[0]
+                const attribution = firstOrSelf(intake.attributions)
+                const valuation = firstOrSelf(intake.valuations)
                 const isSelected = selectedIds.has(intake.id)
                 
                 const attributionSummary = attribution

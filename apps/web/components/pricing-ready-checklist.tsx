@@ -3,25 +3,32 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { CheckCircle2, Circle, XCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { firstOrSelf } from '@/lib/relations'
 
 interface PricingReadyChecklistProps {
   intake: {
     coin_media?: Array<{ kind?: string; media_type: string }>
-    attributions?: Array<{
+    attributions?: {
       year?: number | null
       denomination?: string | null
       mintmark?: string | null
       series?: string | null
       title?: string | null
-    }>
-    valuations?: Array<any>
+    } | Array<{
+      year?: number | null
+      denomination?: string | null
+      mintmark?: string | null
+      series?: string | null
+      title?: string | null
+    }> | null
+    valuations?: any | Array<any> | null
   }
 }
 
 export function PricingReadyChecklist({ intake }: PricingReadyChecklistProps) {
   const images = intake.coin_media || []
-  const attribution = intake.attributions?.[0]
-  const valuation = intake.valuations?.[0]
+  const attribution = firstOrSelf(intake.attributions)
+  const valuation = firstOrSelf(intake.valuations)
   
   // Check 1: Photos present (at least one photo)
   const hasPhotos = images.length > 0
