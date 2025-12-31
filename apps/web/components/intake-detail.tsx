@@ -195,7 +195,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       }
       
       // Update local state to reflect saved keywords and new ID (if created)
-      setAttribution((prev) => {
+      setAttribution((prev: typeof attribution) => {
         const updated = {
           ...prev,
           ...(newId && { id: newId }),
