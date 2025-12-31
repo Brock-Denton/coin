@@ -57,6 +57,8 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   const [gradingMessage, setGradingMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [gradingLoading, setGradingLoading] = useState(false)
   const [workerOnline, setWorkerOnline] = useState<boolean | null>(null)
+  const [queuedJobCount, setQueuedJobCount] = useState<number | null>(null) // Track recently queued pricing jobs
+  const [queuedGradingJobCount, setQueuedGradingJobCount] = useState<number | null>(null) // Track recently queued grading jobs
   const router = useRouter()
   const supabase = createClient()
   
@@ -417,12 +419,17 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         if (createdCount === 0) {
           setPricingMessage({ type: 'error', text: 'No jobs created. Pending jobs may already exist for these sources.' })
         } else {
+          // Track queued jobs to show progress immediately
+          setQueuedJobCount(createdCount)
+          // Clear queued count after 10 seconds (jobs should appear by then)
+          setTimeout(() => setQueuedJobCount(null), 10000)
+          
           // Check worker availability after queuing
           const workerAvailable = await checkWorkerAvailability()
           if (workerAvailable) {
-            setPricingMessage({ type: 'success', text: `${createdCount} job(s) queued! Worker will pick them up in ~5-10 seconds...` })
+            setPricingMessage({ type: 'success', text: `Successfully queued ${createdCount} pricing job(s). Jobs typically take 2-5 minutes to complete.` })
           } else {
-            setPricingMessage({ type: 'warning', text: `${createdCount} job(s) queued, but no workers are online. Jobs will remain pending until a worker starts.` })
+            setPricingMessage({ type: 'warning', text: `Successfully queued ${createdCount} pricing job(s), but no workers are online. Jobs will remain pending until a worker starts.` })
           }
           router.refresh()
         }
@@ -523,7 +530,16 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         if (createdCount === 0) {
           setPricingMessage({ type: 'error', text: 'No jobs created. Pending jobs may already exist.' })
         } else {
-          setPricingMessage({ type: 'success', text: `Successfully queued ${createdCount} pricing job(s)` })
+          // Track queued jobs to show progress immediately
+          setQueuedJobCount(createdCount)
+          setTimeout(() => setQueuedJobCount(null), 10000)
+          
+          const workerAvailable = await checkWorkerAvailability()
+          if (workerAvailable) {
+            setPricingMessage({ type: 'success', text: `Successfully queued ${createdCount} pricing job(s). Jobs typically take 2-5 minutes to complete.` })
+          } else {
+            setPricingMessage({ type: 'warning', text: `Successfully queued ${createdCount} pricing job(s), but no workers are online. Jobs will remain pending until a worker starts.` })
+          }
           router.refresh()
         }
       }
@@ -537,20 +553,29 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   // Check worker availability
   const checkWorkerAvailability = async (): Promise<boolean> => {
     try {
+      // Check for workers with heartbeats within the last 2 minutes
+      // Use gte (greater than or equal) to be more inclusive and handle edge cases
       const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString()
       const { data: workers, error } = await supabase
         .from('worker_heartbeats')
         .select('worker_id, last_seen_at')
-        .gt('last_seen_at', twoMinutesAgo)
+        .gte('last_seen_at', twoMinutesAgo)
         .limit(1)
       
       if (error) {
         console.error('Error checking worker availability:', error)
+        setWorkerOnline(false)
         return false
       }
       
       const isOnline = workers && workers.length > 0
       setWorkerOnline(isOnline)
+      
+      // Log for debugging
+      if (!isOnline) {
+        console.debug('No workers found online. Last check:', twoMinutesAgo, 'Workers found:', workers)
+      }
+      
       return isOnline
     } catch (err) {
       console.error('Error checking worker availability:', err)
@@ -590,15 +615,19 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       
       if (error) {
         setGradingMessage({ type: 'error', text: `Error: ${error.message}` })
-      } else {
-        const createdCount = data || 0
-        if (createdCount === 0) {
-          setGradingMessage({ type: 'error', text: 'No job created. A pending grading job may already exist.' })
         } else {
-          setGradingMessage({ type: 'success', text: 'Successfully queued grading job' })
-          router.refresh()
+          const createdCount = data || 0
+          if (createdCount === 0) {
+            setGradingMessage({ type: 'error', text: 'No job created. A pending grading job may already exist.' })
+          } else {
+            // Track queued grading job to show progress immediately
+            setQueuedGradingJobCount(createdCount)
+            setTimeout(() => setQueuedGradingJobCount(null), 10000)
+            
+            setGradingMessage({ type: 'success', text: 'Successfully queued grading job' })
+            router.refresh()
+          }
         }
-      }
     } catch (err: any) {
       setGradingMessage({ type: 'error', text: `Error: ${err.message}` })
     } finally {
@@ -869,7 +898,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Progress Indicator */}
-          <JobProgressIndicator jobs={jobs} jobType="grading" />
+          <JobProgressIndicator jobs={jobs} jobType="grading" queuedCount={queuedGradingJobCount} />
           
           {/* Grading Message */}
           {gradingMessage && (
@@ -1125,7 +1154,7 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Progress Indicator */}
-          <JobProgressIndicator jobs={jobs} />
+          <JobProgressIndicator jobs={jobs} queuedCount={queuedJobCount} />
           
           {/* Worker Status */}
           {workerOnline !== null && (

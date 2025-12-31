@@ -37,14 +37,28 @@ export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh, jobType
   useEffect(() => {
     const checkWorker = async () => {
       try {
+        // Check for workers with heartbeats within the last 2 minutes
+        // Use gte (greater than or equal) to be more inclusive and handle edge cases
         const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString()
-        const { data: workers } = await supabase
+        const { data: workers, error } = await supabase
           .from('worker_heartbeats')
           .select('worker_id, last_seen_at')
-          .gt('last_seen_at', twoMinutesAgo)
+          .gte('last_seen_at', twoMinutesAgo)
           .limit(1)
         
-        setWorkerOnline(workers && workers.length > 0)
+        if (error) {
+          console.error('Error checking worker availability:', error)
+          setWorkerOnline(false)
+          return
+        }
+        
+        const isOnline = workers && workers.length > 0
+        setWorkerOnline(isOnline)
+        
+        // Log for debugging
+        if (!isOnline) {
+          console.debug('No workers found online. Last check:', twoMinutesAgo, 'Workers found:', workers)
+        }
       } catch (err) {
         console.error('Error checking worker availability:', err)
         setWorkerOnline(false)
@@ -61,9 +75,31 @@ export function JobStatus({ intakeId, jobs, pricePoints = [], onRefresh, jobType
     ? jobs.filter((job: any) => job.job_type === jobType)
     : jobs
 
-  // Initialize jobs from filtered props
+  // Initialize jobs from filtered props, but filter out old failed jobs when new jobs exist
   useEffect(() => {
-    setCurrentJobs(filteredJobs)
+    // Always filter to show only the most recent batch of jobs
+    // This hides old failed jobs when new jobs are queued (even if they're not active yet)
+    if (filteredJobs.length === 0) {
+      setCurrentJobs([])
+      return
+    }
+    
+    // Find the most recent job (any status)
+    const sortedJobs = [...filteredJobs].sort((a: any, b: any) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    const mostRecentJob = sortedJobs[0]
+    
+    // Show only jobs from the same batch (created within 5 minutes of the most recent job)
+    // This ensures old failed jobs are hidden when new jobs are queued
+    const batchTime = new Date(mostRecentJob.created_at).getTime()
+    const batchJobs = filteredJobs.filter((job: any) => {
+      const jobTime = new Date(job.created_at).getTime()
+      const timeDiff = Math.abs(jobTime - batchTime)
+      return timeDiff < 300000 // Within 5 minutes (allows for staggered job creation)
+    })
+    
+    setCurrentJobs(batchJobs)
   }, [filteredJobs])
 
   // Poll for job updates - more frequently when pending (2s) vs running (3s)

@@ -106,12 +106,20 @@ def process_job(job: dict):
         job: Job dictionary from database
     """
     job_id = job['id']
+    job_type = job.get('job_type', 'pricing')  # Default to 'pricing' for backwards compatibility
+    
+    # Skip grading jobs - they should be processed by the grader service
+    if job_type == 'grading':
+        logger.warning("Skipping grading job - should be processed by grader service", 
+                      job_id=job_id, job_type=job_type)
+        return
+    
     intake_id = job['intake_id']
     source_id = job['source_id']
     query_params = job.get('query_params', {})
     
     start_time = datetime.now()
-    logger.info("Processing job", job_id=job_id, intake_id=intake_id, source_id=source_id, worker_id=settings.worker_id)
+    logger.info("Processing job", job_id=job_id, intake_id=intake_id, source_id=source_id, worker_id=settings.worker_id, job_type=job_type)
     
     # Start heartbeat thread FIRST (before any early returns)
     heartbeat_stop = threading.Event()

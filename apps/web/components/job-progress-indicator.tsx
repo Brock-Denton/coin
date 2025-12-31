@@ -8,9 +8,10 @@ import { cn } from '@/lib/utils'
 interface JobProgressIndicatorProps {
   jobs: any[]
   jobType?: string // Optional: filter by job type ('pricing' or 'grading')
+  queuedCount?: number | null // Optional: number of jobs just queued (to show progress immediately)
 }
 
-export function JobProgressIndicator({ jobs, jobType }: JobProgressIndicatorProps) {
+export function JobProgressIndicator({ jobs, jobType, queuedCount }: JobProgressIndicatorProps) {
   // Filter jobs by jobType if provided
   const filteredJobs = useMemo(() => {
     return jobType 
@@ -18,36 +19,53 @@ export function JobProgressIndicator({ jobs, jobType }: JobProgressIndicatorProp
       : jobs
   }, [jobs, jobType])
 
-  // Calculate progress
+  // If jobs are queued but not yet in the array, create placeholder jobs
+  const jobsWithQueued = useMemo(() => {
+    if (queuedCount && queuedCount > 0 && filteredJobs.length === 0) {
+      // Create placeholder jobs to show progress
+      return Array(queuedCount).fill(null).map((_, i) => ({
+        id: `queued-${i}`,
+        status: 'pending',
+        job_type: jobType || 'pricing',
+        created_at: new Date().toISOString()
+      }))
+    }
+    return filteredJobs
+  }, [filteredJobs, queuedCount, jobType])
+
+  // Calculate progress - only count completed jobs, exclude running/pending from denominator
   const progress = useMemo(() => {
-    if (filteredJobs.length === 0) return 0
-    const completed = filteredJobs.filter((j: any) => 
+    if (jobsWithQueued.length === 0) return 0
+    const completed = jobsWithQueued.filter((j: any) => 
       j.status === 'succeeded' || j.status === 'failed'
     ).length
-    return (completed / filteredJobs.length) * 100
-  }, [filteredJobs])
+    const total = jobsWithQueued.length
+    // Only show progress based on completed jobs - running jobs don't contribute to progress yet
+    // This gives a more accurate representation: if 3 of 4 are done, show 75%, not counting the running one
+    return total > 0 ? (completed / total) * 100 : 0
+  }, [jobsWithQueued])
 
   // Determine current state
   const state = useMemo(() => {
-    const hasPending = filteredJobs.some((j: any) => j.status === 'pending')
-    const hasRunning = filteredJobs.some((j: any) => j.status === 'running')
-    const allCompleted = filteredJobs.length > 0 && filteredJobs.every((j: any) => 
+    const hasPending = jobsWithQueued.some((j: any) => j.status === 'pending')
+    const hasRunning = jobsWithQueued.some((j: any) => j.status === 'running')
+    const allCompleted = jobsWithQueued.length > 0 && jobsWithQueued.every((j: any) => 
       j.status === 'succeeded' || j.status === 'failed'
     )
-    const hasFailed = filteredJobs.some((j: any) => j.status === 'failed')
+    const hasFailed = jobsWithQueued.some((j: any) => j.status === 'failed')
 
     if (hasFailed && allCompleted) return 'failed'
     if (allCompleted) return 'completed'
     if (hasRunning) return 'running'
     if (hasPending) return 'queued'
     return 'idle'
-  }, [filteredJobs])
+  }, [jobsWithQueued])
 
   // Get status display
   const statusDisplay = useMemo(() => {
-    const runningCount = filteredJobs.filter((j: any) => j.status === 'running').length
-    const pendingCount = filteredJobs.filter((j: any) => j.status === 'pending').length
-    const completedCount = filteredJobs.filter((j: any) => j.status === 'succeeded' || j.status === 'failed').length
+    const runningCount = jobsWithQueued.filter((j: any) => j.status === 'running').length
+    const pendingCount = jobsWithQueued.filter((j: any) => j.status === 'pending').length
+    const completedCount = jobsWithQueued.filter((j: any) => j.status === 'succeeded' || j.status === 'failed').length
 
     switch (state) {
       case 'queued':
@@ -70,7 +88,7 @@ export function JobProgressIndicator({ jobs, jobType }: JobProgressIndicatorProp
         }
       case 'completed':
         return {
-          text: `Completed! (${completedCount}/${filteredJobs.length})`,
+          text: `Completed! (${completedCount}/${jobsWithQueued.length})`,
           icon: CheckCircle2,
           color: 'text-green-600 dark:text-green-400',
           bgColor: 'bg-green-50 dark:bg-green-950',
@@ -79,7 +97,7 @@ export function JobProgressIndicator({ jobs, jobType }: JobProgressIndicatorProp
         }
       case 'failed':
         return {
-          text: `Failed (${filteredJobs.filter((j: any) => j.status === 'failed').length}/${filteredJobs.length})`,
+          text: `Failed (${jobsWithQueued.filter((j: any) => j.status === 'failed').length}/${jobsWithQueued.length})`,
           icon: XCircle,
           color: 'text-red-600 dark:text-red-400',
           bgColor: 'bg-red-50 dark:bg-red-950',
@@ -96,11 +114,10 @@ export function JobProgressIndicator({ jobs, jobType }: JobProgressIndicatorProp
           progressColor: 'bg-muted-foreground'
         }
     }
-  }, [state, filteredJobs, progress])
+  }, [state, jobsWithQueued, progress])
 
-  // Don't show if no jobs and no active state
-  // But we'll let the parent handle showing a message when queuing
-  if (filteredJobs.length === 0) {
+  // Don't show if no jobs and no queued count
+  if (jobsWithQueued.length === 0 && !queuedCount) {
     return null
   }
 
@@ -147,7 +164,7 @@ export function JobProgressIndicator({ jobs, jobType }: JobProgressIndicatorProp
           </div>
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>
-              {filteredJobs.filter((j: any) => j.status === 'succeeded' || j.status === 'failed').length} of {filteredJobs.length} jobs completed
+              {jobsWithQueued.filter((j: any) => j.status === 'succeeded' || j.status === 'failed').length} of {jobsWithQueued.length} jobs completed
             </span>
             {state === 'running' && (
               <span>Processing...</span>
