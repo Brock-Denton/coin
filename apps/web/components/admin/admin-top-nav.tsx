@@ -1,11 +1,12 @@
 'use client'
 
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 
 export function AdminTopNav() {
   const pathname = usePathname()
+  const router = useRouter()
 
   return (
     <div className="flex items-center justify-between">
@@ -13,23 +14,41 @@ export function AdminTopNav() {
         Admin - coins.gov.technology
       </Link>
       <div className="flex items-center gap-4">
-        <Button asChild variant={pathname.startsWith('/admin/intakes') ? 'secondary' : 'outline'}>
-          <Link href="/admin/intakes">Intakes</Link>
+        <Button 
+          variant={pathname.startsWith('/admin/intakes') ? 'secondary' : 'outline'}
+          onClick={() => router.push('/admin/intakes')}
+        >
+          Intakes
         </Button>
-        <Button asChild variant={pathname.startsWith('/admin/sources') ? 'secondary' : 'outline'}>
-          <Link href="/admin/sources">Sources</Link>
+        <Button 
+          variant={pathname.startsWith('/admin/sources') ? 'secondary' : 'outline'}
+          onClick={() => router.push('/admin/sources')}
+        >
+          Sources
         </Button>
-        <Button asChild variant={pathname.startsWith('/admin/orders') ? 'secondary' : 'outline'}>
-          <Link href="/admin/orders">Orders</Link>
+        <Button 
+          variant={pathname.startsWith('/admin/orders') ? 'secondary' : 'outline'}
+          onClick={() => router.push('/admin/orders')}
+        >
+          Orders
         </Button>
-        <Button asChild variant={pathname.startsWith('/admin/grading-services') ? 'secondary' : 'outline'}>
-          <Link href="/admin/grading-services">Grading Services</Link>
+        <Button 
+          variant={pathname.startsWith('/admin/grading-services') ? 'secondary' : 'outline'}
+          onClick={() => router.push('/admin/grading-services')}
+        >
+          Grading Services
         </Button>
-        <Button asChild variant={pathname.startsWith('/admin/grading-ship-policies') ? 'secondary' : 'outline'}>
-          <Link href="/admin/grading-ship-policies">Ship Policies</Link>
+        <Button 
+          variant={pathname.startsWith('/admin/grading-ship-policies') ? 'secondary' : 'outline'}
+          onClick={() => router.push('/admin/grading-ship-policies')}
+        >
+          Ship Policies
         </Button>
-        <Button asChild variant={pathname.startsWith('/admin/grade-multipliers') ? 'secondary' : 'outline'}>
-          <Link href="/admin/grade-multipliers">Grade Multipliers</Link>
+        <Button 
+          variant={pathname.startsWith('/admin/grade-multipliers') ? 'secondary' : 'outline'}
+          onClick={() => router.push('/admin/grade-multipliers')}
+        >
+          Grade Multipliers
         </Button>
         <form action="/admin/logout" method="post">
           <Button type="submit" variant="outline" className="border-[#27272a] hover:border-white/30 hover:bg-white/10">Logout</Button>

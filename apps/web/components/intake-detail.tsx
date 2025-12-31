@@ -65,11 +65,64 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   const attributionRef = useRef(attribution)
   // Track the last saved state to compare against (updated after each save)
   const savedAttributionRef = useRef(attribution)
+  // Track if we just saved to avoid syncing from props immediately after save
+  const justSavedRef = useRef(false)
   
   // Keep attributionRef in sync with attribution state
   useEffect(() => {
     attributionRef.current = attribution
   }, [attribution])
+  
+  // Sync attribution state from props when intake prop changes (e.g., when navigating back to page)
+  useEffect(() => {
+    // Skip sync on initial mount (handled by useState initialization)
+    if (isInitialMount.current) {
+      return
+    }
+    
+    // Skip sync if we just saved (to avoid overwriting user's changes)
+    if (justSavedRef.current) {
+      return
+    }
+    
+    // Skip sync if user has unsaved changes (they're actively editing)
+    if (hasUnsavedChanges.current) {
+      return
+    }
+    
+    const propsAttribution = intake.attributions?.[0] || {}
+    
+    // Normalize keywords from arrays to strings for UI
+    const keywordsIncludeString = propsAttribution.keywords_include 
+      ? (Array.isArray(propsAttribution.keywords_include) 
+          ? propsAttribution.keywords_include.join(', ') 
+          : propsAttribution.keywords_include)
+      : ''
+    const keywordsExcludeString = propsAttribution.keywords_exclude
+      ? (Array.isArray(propsAttribution.keywords_exclude)
+          ? propsAttribution.keywords_exclude.join(', ')
+          : propsAttribution.keywords_exclude)
+      : ''
+    
+    // Build normalized attribution object
+    const normalizedAttribution = {
+      ...propsAttribution,
+      keywords_include_string: keywordsIncludeString,
+      keywords_exclude_string: keywordsExcludeString,
+    }
+    
+    // Only update if props attribution is different from current state
+    const currentAttributionStr = JSON.stringify(attribution)
+    const normalizedAttributionStr = JSON.stringify(normalizedAttribution)
+    
+    if (currentAttributionStr !== normalizedAttributionStr) {
+      setAttribution(normalizedAttribution)
+      // Update saved reference to match props so change detection works correctly
+      savedAttributionRef.current = JSON.parse(JSON.stringify(normalizedAttribution))
+      hasUnsavedChanges.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intake.attributions])
   
   // Normalize keywords from comma-separated string to array
   const normalizeKeywords = (keywordsString: string): string[] => {
@@ -155,6 +208,11 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
       })
       
       hasUnsavedChanges.current = false
+      // Set flag to prevent immediate sync from props after save (clear after 1 second)
+      justSavedRef.current = true
+      setTimeout(() => {
+        justSavedRef.current = false
+      }, 1000)
       
       if (showAlert) {
         alert('Attribution saved successfully')
