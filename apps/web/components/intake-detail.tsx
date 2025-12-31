@@ -75,8 +75,35 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
   
   // Sync attribution state from props when intake prop changes (e.g., when navigating back to page)
   useEffect(() => {
-    // Skip sync on initial mount (handled by useState initialization)
+    // Helper to normalize attribution from props
+    const normalizeAttributionFromProps = (propsAttribution: any) => {
+      const keywordsIncludeString = propsAttribution.keywords_include 
+        ? (Array.isArray(propsAttribution.keywords_include) 
+            ? propsAttribution.keywords_include.join(', ') 
+            : propsAttribution.keywords_include)
+        : ''
+      const keywordsExcludeString = propsAttribution.keywords_exclude
+        ? (Array.isArray(propsAttribution.keywords_exclude)
+            ? propsAttribution.keywords_exclude.join(', ')
+            : propsAttribution.keywords_exclude)
+        : ''
+      
+      return {
+        ...propsAttribution,
+        keywords_include_string: keywordsIncludeString,
+        keywords_exclude_string: keywordsExcludeString,
+      }
+    }
+    
+    const propsAttribution = intake.attributions?.[0] || {}
+    const normalizedAttribution = normalizeAttributionFromProps(propsAttribution)
+    
+    // On initial mount, always sync from props (props are the source of truth)
     if (isInitialMount.current) {
+      setAttribution(normalizedAttribution)
+      savedAttributionRef.current = JSON.parse(JSON.stringify(normalizedAttribution))
+      hasUnsavedChanges.current = false
+      isInitialMount.current = false
       return
     }
     
@@ -88,27 +115,6 @@ export function IntakeDetail({ intake, pricePoints, jobs, gradeEstimates, gradin
     // Skip sync if user has unsaved changes (they're actively editing)
     if (hasUnsavedChanges.current) {
       return
-    }
-    
-    const propsAttribution = intake.attributions?.[0] || {}
-    
-    // Normalize keywords from arrays to strings for UI
-    const keywordsIncludeString = propsAttribution.keywords_include 
-      ? (Array.isArray(propsAttribution.keywords_include) 
-          ? propsAttribution.keywords_include.join(', ') 
-          : propsAttribution.keywords_include)
-      : ''
-    const keywordsExcludeString = propsAttribution.keywords_exclude
-      ? (Array.isArray(propsAttribution.keywords_exclude)
-          ? propsAttribution.keywords_exclude.join(', ')
-          : propsAttribution.keywords_exclude)
-      : ''
-    
-    // Build normalized attribution object
-    const normalizedAttribution = {
-      ...propsAttribution,
-      keywords_include_string: keywordsIncludeString,
-      keywords_exclude_string: keywordsExcludeString,
     }
     
     // Only update if props attribution is different from current state
