@@ -11,23 +11,28 @@ logger = structlog.get_logger()
 # Initialize Supabase client
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
-
-def _select_one(table: str, columns: str = "*", filters: dict = None) -> Optional[dict]:
+def _first_row(table: str, filters: List[tuple], columns: str = "*") -> Optional[Dict]:
     """
-    Safe helper that returns a single row dict or None.
-    Avoids PostgREST 406 from .single() and avoids maybe_single() edge cases.
+    Safe "maybe single" helper that never uses PostgREST .single()/maybe_single().
+    PostgREST returns 406 when object is requested but 0 rows exist.
+    We always fetch an array and take the first row.
     """
     q = supabase.table(table).select(columns)
-    if filters:
-        for k, v in filters.items():
-            q = q.eq(k, v)
-    resp = q.limit(1).execute()
-    if not resp or not getattr(resp, "data", None):
-        return None
-    # resp.data is usually a list for normal select queries
-    if isinstance(resp.data, list):
-        return resp.data[0] if resp.data else None
-    return resp.data
+    for op, key, val in filters:
+        if op == "eq":
+            q = q.eq(key, val)
+        elif op == "is":
+            q = q.is_(key, val)
+        elif op == "in":
+            q = q.in_(key, val)
+        else:
+            raise ValueError(f"Unsupported filter op: {op}")
+    res = q.limit(1).execute()
+    data = getattr(res, "data", None) or []
+    if isinstance(data, list):
+        return data[0] if data else None
+    # Some clients return dict for single row; normalize.
+    return data if data else None
 
 
 def get_internal_grader_source_id() -> Optional[str]:
@@ -37,17 +42,16 @@ def get_internal_grader_source_id() -> Optional[str]:
         Source ID if found, None otherwise
     """
     try:
-        # Avoid .single() (406 if 0 rows). We want "maybe 1 row".
-        result = supabase.table("sources") \
-            .select("id") \
-            .eq("name", "Internal Grader") \
-            .eq("adapter_type", "internal_grader") \
-            .eq("enabled", True) \
-            .limit(1) \
-            .execute()
-        if result.data and len(result.data) > 0:
-            return result.data[0].get("id")
-        return None
+        row = _first_row(
+            "sources",
+            [
+                ("eq", "name", "Internal Grader"),
+                ("eq", "adapter_type", "internal_grader"),
+                ("eq", "enabled", True),
+            ],
+            columns="id",
+        )
+        return row.get("id") if row else None
     except Exception as e:
         logger.error("Failed to get Internal Grader source ID", error=str(e))
         return None
@@ -186,13 +190,7 @@ def get_attribution(intake_id: str) -> Optional[Dict]:
         Attribution dictionary or None
     """
     try:
-        # Avoid .single() (406 if 0 rows). Attribution might not exist yet.
-        result = supabase.table("attributions") \
-            .select("*") \
-            .eq("intake_id", intake_id) \
-            .limit(1) \
-            .execute()
-        return result.data[0] if result.data and len(result.data) > 0 else None
+        return _first_row("attributions", [("eq", "intake_id", intake_id)], columns="*")
     except Exception as e:
         logger.error("Failed to get attribution", intake_id=intake_id, error=str(e))
         return None
@@ -208,13 +206,7 @@ def get_valuation(intake_id: str) -> Optional[Dict]:
         Valuation dictionary or None
     """
     try:
-        # Avoid .single() (406 if 0 rows). Valuation often doesn't exist yet.
-        result = supabase.table("valuations") \
-            .select("*") \
-            .eq("intake_id", intake_id) \
-            .limit(1) \
-            .execute()
-        return result.data[0] if result.data and len(result.data) > 0 else None
+        return _first_row("valuations", [("eq", "intake_id", intake_id)], columns="*")
     except Exception as e:
         logger.error("Failed to get valuation", intake_id=intake_id, error=str(e))
         return None
@@ -226,27 +218,24 @@ def upsert_grade_estimate(intake_id: str, grade_estimate_data: dict, model_versi
     Uses unique constraint: (intake_id, model_version).
     Avoids "select then insert/update" race conditions and NoneType result issues.
     """
-    try:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        estimate_data = {
-            "intake_id": intake_id,
-            "model_version": model_version,
-            "grade_bucket": grade_estimate_data.get("grade_bucket"),
-            "grade_distribution": grade_estimate_data.get("grade_distribution"),
-            "details_risk": grade_estimate_data.get("details_risk"),
-            "confidence": float(grade_estimate_data.get("confidence", 0.5)),
-            "notes": grade_estimate_data.get("notes"),
-            "updated_at": now_iso,
-        }
-
-        # Single atomic upsert using unique constraint (intake_id, model_version)
-        supabase.table("grade_estimates") \
-            .upsert(estimate_data, on_conflict="intake_id,model_version") \
-            .execute()
-
-        logger.info("Upserted grade estimate", intake_id=intake_id, model_version=model_version)
-    except Exception as e:
-        logger.error("Failed to upsert grade estimate", intake_id=intake_id, error=str(e))
+    # IMPORTANT: do not swallow errors here. If this fails, the grader should fail the job.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    estimate_data = {
+        "intake_id": intake_id,
+        "model_version": model_version,
+        "grade_bucket": grade_estimate_data.get("grade_bucket"),
+        "grade_distribution": grade_estimate_data.get("grade_distribution"),
+        "details_risk": grade_estimate_data.get("details_risk"),
+        "confidence": float(grade_estimate_data.get("confidence", 0.5)),
+        "notes": grade_estimate_data.get("notes"),
+        "updated_at": now_iso,
+    }
+    res = supabase.table("grade_estimates") \
+        .upsert(estimate_data, on_conflict="intake_id,model_version") \
+        .execute()
+    if getattr(res, "data", None) is None:
+        raise RuntimeError(f"grade_estimates upsert returned no data for intake_id={intake_id}")
+    logger.info("Upserted grade estimate", intake_id=intake_id, model_version=model_version)
 
 
 def upsert_grading_recommendation(intake_id: str, service_id: str, recommendation_data: dict, ship_policy_id: Optional[str] = None):
