@@ -37,12 +37,17 @@ def get_internal_grader_source_id() -> Optional[str]:
         Source ID if found, None otherwise
     """
     try:
-        row = _select_one(
-            "sources",
-            columns="id",
-            filters={"name": "Internal Grader", "adapter_type": "internal_grader", "enabled": True},
-        )
-        return row["id"] if row else None
+        # Avoid .single() (406 if 0 rows). We want "maybe 1 row".
+        result = supabase.table("sources") \
+            .select("id") \
+            .eq("name", "Internal Grader") \
+            .eq("adapter_type", "internal_grader") \
+            .eq("enabled", True) \
+            .limit(1) \
+            .execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0].get("id")
+        return None
     except Exception as e:
         logger.error("Failed to get Internal Grader source ID", error=str(e))
         return None
@@ -181,7 +186,13 @@ def get_attribution(intake_id: str) -> Optional[Dict]:
         Attribution dictionary or None
     """
     try:
-        return _select_one("attributions", "*", {"intake_id": intake_id})
+        # Avoid .single() (406 if 0 rows). Attribution might not exist yet.
+        result = supabase.table("attributions") \
+            .select("*") \
+            .eq("intake_id", intake_id) \
+            .limit(1) \
+            .execute()
+        return result.data[0] if result.data and len(result.data) > 0 else None
     except Exception as e:
         logger.error("Failed to get attribution", intake_id=intake_id, error=str(e))
         return None
@@ -197,7 +208,13 @@ def get_valuation(intake_id: str) -> Optional[Dict]:
         Valuation dictionary or None
     """
     try:
-        return _select_one("valuations", "*", {"intake_id": intake_id})
+        # Avoid .single() (406 if 0 rows). Valuation often doesn't exist yet.
+        result = supabase.table("valuations") \
+            .select("*") \
+            .eq("intake_id", intake_id) \
+            .limit(1) \
+            .execute()
+        return result.data[0] if result.data and len(result.data) > 0 else None
     except Exception as e:
         logger.error("Failed to get valuation", intake_id=intake_id, error=str(e))
         return None
@@ -222,8 +239,7 @@ def upsert_grade_estimate(intake_id: str, grade_estimate_data: dict, model_versi
             "updated_at": now_iso,
         }
 
-        # created_at has default now(), and is nullable, so we don't need to send it.
-        # Use on_conflict to match the unique index (intake_id, model_version).
+        # Single atomic upsert using unique constraint (intake_id, model_version)
         supabase.table("grade_estimates") \
             .upsert(estimate_data, on_conflict="intake_id,model_version") \
             .execute()
