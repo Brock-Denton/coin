@@ -204,20 +204,12 @@ def get_valuation(intake_id: str) -> Optional[Dict]:
 
 
 def upsert_grade_estimate(intake_id: str, grade_estimate_data: dict, model_version: str = "baseline_v1"):
-    """Create or update a grade estimate.
-    
-    Args:
-        intake_id: Intake ID
-        grade_estimate_data: Grade estimate data dictionary
-        model_version: Model version identifier
+    """Create or update a grade estimate using a single atomic UPSERT.
+
+    Uses unique constraint: (intake_id, model_version).
+    Avoids "select then insert/update" race conditions and NoneType result issues.
     """
     try:
-        existing = _select_one(
-            "grade_estimates",
-            columns="id",
-            filters={"intake_id": intake_id, "model_version": model_version},
-        )
-
         now_iso = datetime.now(timezone.utc).isoformat()
         estimate_data = {
             "intake_id": intake_id,
@@ -230,13 +222,13 @@ def upsert_grade_estimate(intake_id: str, grade_estimate_data: dict, model_versi
             "updated_at": now_iso,
         }
 
-        if existing and existing.get("id"):
-            supabase.table("grade_estimates").update(estimate_data).eq("id", existing["id"]).execute()
-            logger.info("Updated grade estimate", intake_id=intake_id, model_version=model_version)
-        else:
-            estimate_data["created_at"] = now_iso
-            supabase.table("grade_estimates").insert(estimate_data).execute()
-            logger.info("Created grade estimate", intake_id=intake_id, model_version=model_version)
+        # created_at has default now(), and is nullable, so we don't need to send it.
+        # Use on_conflict to match the unique index (intake_id, model_version).
+        supabase.table("grade_estimates") \
+            .upsert(estimate_data, on_conflict="intake_id,model_version") \
+            .execute()
+
+        logger.info("Upserted grade estimate", intake_id=intake_id, model_version=model_version)
     except Exception as e:
         logger.error("Failed to upsert grade estimate", intake_id=intake_id, error=str(e))
 
@@ -251,12 +243,6 @@ def upsert_grading_recommendation(intake_id: str, service_id: str, recommendatio
         ship_policy_id: Optional shipping policy ID
     """
     try:
-        existing = _select_one(
-            "grading_recommendations",
-            columns="id",
-            filters={"intake_id": intake_id, "service_id": service_id},
-        )
-
         now_iso = datetime.now(timezone.utc).isoformat()
         rec_data = {
             "intake_id": intake_id,
@@ -271,13 +257,13 @@ def upsert_grading_recommendation(intake_id: str, service_id: str, recommendatio
             "updated_at": now_iso,
         }
 
-        if existing and existing.get("id"):
-            supabase.table("grading_recommendations").update(rec_data).eq("id", existing["id"]).execute()
-            logger.info("Updated grading recommendation", intake_id=intake_id, service_id=service_id)
-        else:
-            rec_data["created_at"] = now_iso
-            supabase.table("grading_recommendations").insert(rec_data).execute()
-            logger.info("Created grading recommendation", intake_id=intake_id, service_id=service_id)
+        # Prefer a single atomic UPSERT to avoid edge cases and races.
+        # This requires a UNIQUE constraint on (intake_id, service_id).
+        supabase.table("grading_recommendations") \
+            .upsert(rec_data, on_conflict="intake_id,service_id") \
+            .execute()
+
+        logger.info("Upserted grading recommendation", intake_id=intake_id, service_id=service_id)
     except Exception as e:
         logger.error("Failed to upsert grading recommendation", intake_id=intake_id, service_id=service_id, error=str(e))
 
