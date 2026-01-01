@@ -12,6 +12,24 @@ logger = structlog.get_logger()
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
 
+def _select_one(table: str, columns: str = "*", filters: dict = None) -> Optional[dict]:
+    """
+    Safe helper that returns a single row dict or None.
+    Avoids PostgREST 406 from .single() and avoids maybe_single() edge cases.
+    """
+    q = supabase.table(table).select(columns)
+    if filters:
+        for k, v in filters.items():
+            q = q.eq(k, v)
+    resp = q.limit(1).execute()
+    if not resp or not getattr(resp, "data", None):
+        return None
+    # resp.data is usually a list for normal select queries
+    if isinstance(resp.data, list):
+        return resp.data[0] if resp.data else None
+    return resp.data
+
+
 def get_internal_grader_source_id() -> Optional[str]:
     """Get the Internal Grader source ID.
     
@@ -19,14 +37,12 @@ def get_internal_grader_source_id() -> Optional[str]:
         Source ID if found, None otherwise
     """
     try:
-        result = supabase.table("sources") \
-            .select("id") \
-            .eq("name", "Internal Grader") \
-            .eq("adapter_type", "internal_grader") \
-            .eq("enabled", True) \
-            .single() \
-            .execute()
-        return result.data.get("id") if result.data else None
+        row = _select_one(
+            "sources",
+            columns="id",
+            filters={"name": "Internal Grader", "adapter_type": "internal_grader", "enabled": True},
+        )
+        return row["id"] if row else None
     except Exception as e:
         logger.error("Failed to get Internal Grader source ID", error=str(e))
         return None
@@ -165,12 +181,7 @@ def get_attribution(intake_id: str) -> Optional[Dict]:
         Attribution dictionary or None
     """
     try:
-        result = supabase.table("attributions") \
-            .select("*") \
-            .eq("intake_id", intake_id) \
-            .single() \
-            .execute()
-        return result.data
+        return _select_one("attributions", "*", {"intake_id": intake_id})
     except Exception as e:
         logger.error("Failed to get attribution", intake_id=intake_id, error=str(e))
         return None
@@ -186,12 +197,7 @@ def get_valuation(intake_id: str) -> Optional[Dict]:
         Valuation dictionary or None
     """
     try:
-        result = supabase.table("valuations") \
-            .select("*") \
-            .eq("intake_id", intake_id) \
-            .single() \
-            .execute()
-        return result.data
+        return _select_one("valuations", "*", {"intake_id": intake_id})
     except Exception as e:
         logger.error("Failed to get valuation", intake_id=intake_id, error=str(e))
         return None
@@ -206,14 +212,12 @@ def upsert_grade_estimate(intake_id: str, grade_estimate_data: dict, model_versi
         model_version: Model version identifier
     """
     try:
-        # Check if estimate exists
-        existing = supabase.table("grade_estimates") \
-            .select("id") \
-            .eq("intake_id", intake_id) \
-            .eq("model_version", model_version) \
-            .maybe_single() \
-            .execute()
-        
+        existing = _select_one(
+            "grade_estimates",
+            columns="id",
+            filters={"intake_id": intake_id, "model_version": model_version},
+        )
+
         now_iso = datetime.now(timezone.utc).isoformat()
         estimate_data = {
             "intake_id": intake_id,
@@ -223,22 +227,15 @@ def upsert_grade_estimate(intake_id: str, grade_estimate_data: dict, model_versi
             "details_risk": grade_estimate_data.get("details_risk"),
             "confidence": float(grade_estimate_data.get("confidence", 0.5)),
             "notes": grade_estimate_data.get("notes"),
-            "updated_at": now_iso
+            "updated_at": now_iso,
         }
-        
-        if existing.data:
-            # Update existing
-            supabase.table("grade_estimates") \
-                .update(estimate_data) \
-                .eq("id", existing.data["id"]) \
-                .execute()
+
+        if existing and existing.get("id"):
+            supabase.table("grade_estimates").update(estimate_data).eq("id", existing["id"]).execute()
             logger.info("Updated grade estimate", intake_id=intake_id, model_version=model_version)
         else:
-            # Insert new
             estimate_data["created_at"] = now_iso
-            supabase.table("grade_estimates") \
-                .insert(estimate_data) \
-                .execute()
+            supabase.table("grade_estimates").insert(estimate_data).execute()
             logger.info("Created grade estimate", intake_id=intake_id, model_version=model_version)
     except Exception as e:
         logger.error("Failed to upsert grade estimate", intake_id=intake_id, error=str(e))
@@ -254,14 +251,12 @@ def upsert_grading_recommendation(intake_id: str, service_id: str, recommendatio
         ship_policy_id: Optional shipping policy ID
     """
     try:
-        # Check if recommendation exists
-        existing = supabase.table("grading_recommendations") \
-            .select("id") \
-            .eq("intake_id", intake_id) \
-            .eq("service_id", service_id) \
-            .maybe_single() \
-            .execute()
-        
+        existing = _select_one(
+            "grading_recommendations",
+            columns="id",
+            filters={"intake_id": intake_id, "service_id": service_id},
+        )
+
         now_iso = datetime.now(timezone.utc).isoformat()
         rec_data = {
             "intake_id": intake_id,
@@ -273,22 +268,15 @@ def upsert_grading_recommendation(intake_id: str, service_id: str, recommendatio
             "expected_profit_cents": recommendation_data.get("expected_profit_cents"),
             "recommendation": recommendation_data.get("recommendation"),
             "breakdown": recommendation_data.get("breakdown", {}),
-            "updated_at": now_iso
+            "updated_at": now_iso,
         }
-        
-        if existing.data:
-            # Update existing
-            supabase.table("grading_recommendations") \
-                .update(rec_data) \
-                .eq("id", existing.data["id"]) \
-                .execute()
+
+        if existing and existing.get("id"):
+            supabase.table("grading_recommendations").update(rec_data).eq("id", existing["id"]).execute()
             logger.info("Updated grading recommendation", intake_id=intake_id, service_id=service_id)
         else:
-            # Insert new
             rec_data["created_at"] = now_iso
-            supabase.table("grading_recommendations") \
-                .insert(rec_data) \
-                .execute()
+            supabase.table("grading_recommendations").insert(rec_data).execute()
             logger.info("Created grading recommendation", intake_id=intake_id, service_id=service_id)
     except Exception as e:
         logger.error("Failed to upsert grading recommendation", intake_id=intake_id, service_id=service_id, error=str(e))
