@@ -10,7 +10,8 @@ from src.db import (
     claim_next_job, update_job_status, mark_job_retryable, log_job_event,
     insert_price_points, get_source, get_source_rules, get_attribution,
     upsert_valuation, update_job_heartbeat, reclaim_stuck_jobs, supabase,
-    upsert_worker_heartbeat, check_source_available, pause_source, get_source_pause_until
+    upsert_worker_heartbeat, check_source_available, pause_source, get_source_pause_until,
+    mark_job_retryable_in
 )
 from src.collectors.ebay import EbayCollector, EbayRateLimitError
 from src.valuation import ValuationEngine
@@ -225,10 +226,19 @@ def process_job(job: dict):
         # If we got nothing AND the source is paused, this should not be "succeeded".
         if not price_points:
             if not check_source_available(source_id):
-                paused_until = get_source_pause_until(source_id)
-                reason = f"Source paused/unavailable (paused_until={paused_until})"
-                log_job_event(job_id, "warning", "Source unavailable, will retry later", {"paused_until": paused_until})
-                update_job_status(job_id, "retryable", reason)
+                paused_until = get_source_pause_until(source_id)  # ISO string or None
+                delay = 300
+                msg = "Source unavailable (paused or disabled)"
+                if paused_until:
+                    try:
+                        pu = datetime.fromisoformat(paused_until.replace('Z', '+00:00'))
+                        now = datetime.now(timezone.utc)
+                        delay = max(30, int((pu - now).total_seconds()))
+                        msg = f"Source paused until {paused_until}"
+                    except Exception:
+                        pass
+                logger.warning("Source unavailable, scheduling retry", source_id=source_id, paused_until=paused_until, delay_seconds=delay)
+                mark_job_retryable_in(job_id, delay_seconds=delay, error_message=msg)
                 return
         
         if not price_points:
@@ -294,8 +304,8 @@ def process_job(job: dict):
     except EbayRateLimitError as e:
         # Pause the source for a while, then retry the job later.
         pause_source(source_id, seconds=3600, reason=str(e))  # 1 hour backoff
-        log_job_event(job_id, "warning", "Rate limited by eBay; pausing source and retrying", {"error": str(e)})
-        update_job_status(job_id, "retryable", str(e))
+        logger.warning("Rate limited by eBay, pausing source and retrying later", source_id=source_id)
+        mark_job_retryable_in(job_id, delay_seconds=3600, error_message=str(e))
         return
     except Exception as e:
         error_msg = str(e)

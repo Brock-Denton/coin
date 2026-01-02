@@ -132,6 +132,24 @@ def update_job_status(job_id: str, status: str, error_message: str = None):
         logger.error("Failed to update job status", job_id=job_id, error=str(e))
 
 
+def mark_job_retryable_in(job_id: str, delay_seconds: int, error_message: Optional[str] = None):
+    """Mark job retryable and set next_retry_at = now + delay_seconds."""
+    try:
+        now = datetime.now(timezone.utc)
+        retry_at = now + timedelta(seconds=max(1, int(delay_seconds)))
+        update = {
+            "status": "retryable",
+            "updated_at": now.isoformat(),
+            "next_retry_at": retry_at.isoformat(),
+        }
+        if error_message:
+            update["error_message"] = error_message
+        supabase.table("scrape_jobs").update(update).eq("id", job_id).execute()
+        logger.info("Marked job as retryable", job_id=job_id, next_retry_at=retry_at.isoformat(), delay_seconds=delay_seconds)
+    except Exception as e:
+        logger.error("Failed to mark job as retryable", job_id=job_id, error=str(e))
+
+
 def mark_job_retryable(job_id: str, base_delay_minutes: int = 5):
     """Mark a job as retryable with exponential backoff.
     
