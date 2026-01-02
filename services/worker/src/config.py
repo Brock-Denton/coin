@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     ebay_cert_id: Optional[str] = None
     ebay_dev_id: Optional[str] = None
     ebay_sandbox: bool = False
+    ebay_marketplace_id: str = "EBAY_US"
+    ebay_oauth_scope: str = "https://api.ebay.com/oauth/api_scope"
     
     # Cache
     cache_enabled: bool = True

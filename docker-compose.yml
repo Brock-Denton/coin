@@ -26,6 +26,7 @@ services:
       - ./services/worker/.env
     environment:
       - PYTHONUNBUFFERED=1
+      - EBAY_MARKETPLACE_ID=${EBAY_MARKETPLACE_ID:-EBAY_US}
     volumes:
       # Cache directory for SQLite cache database (persists across restarts)
       - worker_cache:/app/cache

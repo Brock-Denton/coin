@@ -12,6 +12,8 @@ from src.db import check_source_available, update_source_stats, get_source, get_
 
 logger = structlog.get_logger()
 
+CACHE_KEY_VERSION = "v2"  # bump to invalidate old cached entries
+
 
 class RateLimiter:
     """Token bucket rate limiter."""
@@ -151,6 +153,20 @@ class Cache:
             conn.close()
         except Exception as e:
             logger.error("Cache clear expired error", error=str(e))
+    
+    def delete(self, key: str) -> None:
+        """Delete a cache entry by key.
+        
+        Args:
+            key: Cache key to delete
+        """
+        try:
+            conn = sqlite3.connect(str(self.cache_path))
+            conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error("Cache delete error", key=key, error=str(e))
 
 
 class BaseCollector(ABC):
@@ -235,7 +251,7 @@ class BaseCollector(ABC):
                              failure_streak=source.get('failure_streak', 0),
                              paused_until=paused_until.isoformat())
     
-    def collect(self, query_params: dict, exclude_keywords: List[str] = None) -> List[Dict]:
+    def collect(self, query_params: Dict, exclude_keywords: List[str] = None) -> List[Dict]:
         """Collect price points with caching, rate limiting, and circuit breaker.
         
         Args:
@@ -245,6 +261,8 @@ class BaseCollector(ABC):
         Returns:
             List of price point dictionaries
         """
+        cache_key = None
+
         # Check circuit breaker
         if not self._check_circuit_breaker():
             paused_until = None
@@ -258,33 +276,56 @@ class BaseCollector(ABC):
                 paused_until=paused_until
             )
             return []
-        
-        # Check cache
+
+        # Cache lookup (treat empty-list as miss, and version cache keys)
         if settings.cache_enabled:
-            cache_key = self._get_cache_key(query_params)
-            cached_result = self.cache.get(cache_key)
-            if cached_result is not None:
-                logger.debug("Cache hit", source_id=self.source_id, cache_key=cache_key)
-                return cached_result
-        
-        # Rate limiting
-        self.rate_limiter.wait_if_needed()
-        
-        # Perform actual collection
+            try:
+                raw_key = self._get_cache_key(query_params)
+                cache_key = f"{CACHE_KEY_VERSION}:{raw_key}"
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    # If an old run cached "[]", bypass it so we retry live calls
+                    if isinstance(cached, list) and len(cached) == 0:
+                        logger.info("Cache hit but empty; bypassing", source_id=self.source_id, cache_key=cache_key)
+                    else:
+                        logger.info("Cache hit", source_id=self.source_id, cache_key=cache_key)
+                        return cached
+            except Exception as e:
+                logger.warning("Cache get failed; continuing without cache", source_id=self.source_id, error=str(e))
+
         try:
-            result = self._collect_impl(query_params, exclude_keywords or [])
-            
-            # Cache result
-            if settings.cache_enabled:
-                self.cache.set(cache_key, result)
-            
-            # Update circuit breaker (success)
-            self._update_circuit_breaker(True)
-            
-            return result
+            # Rate limit check
+            self.rate_limiter.wait_if_needed()
+
+            # Actual collector implementation
+            data = self._collect_impl(query_params, exclude_keywords or [])
+
+            # Success: update circuit breaker
+            self._update_circuit_breaker(success=True)
+
+            # Cache write (skip caching empty lists)
+            if settings.cache_enabled and cache_key:
+                try:
+                    if isinstance(data, list) and len(data) == 0:
+                        logger.info("Skipping cache write for empty result", source_id=self.source_id, cache_key=cache_key)
+                    else:
+                        self.cache.set(cache_key, data, ttl_seconds=settings.cache_ttl_seconds)
+                except Exception as e:
+                    logger.warning("Cache set failed", source_id=self.source_id, error=str(e))
+
+            return data
+
         except Exception as e:
-            # Update circuit breaker (failure)
-            self._update_circuit_breaker(False)
+            # Failure: update circuit breaker
+            self._update_circuit_breaker(success=False)
+
+            # If we had a cache key, try to delete it (avoid poisoning)
+            if settings.cache_enabled and cache_key:
+                try:
+                    self.cache.delete(cache_key)
+                except Exception:
+                    pass
+
             raise
     
     @abstractmethod
