@@ -2,7 +2,7 @@
 from supabase import create_client, Client
 from src.config import settings
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import structlog
 
 logger = structlog.get_logger()
@@ -395,6 +395,38 @@ def check_source_available(source_id: str) -> bool:
     except Exception as e:
         logger.error("Failed to check source availability", source_id=source_id, error=str(e))
         return False
+
+
+def get_source_pause_until(source_id: str) -> Optional[str]:
+    """Return paused_until (ISO string) for a source, if any."""
+    try:
+        result = supabase.table("sources") \
+            .select("paused_until") \
+            .eq("id", source_id) \
+            .limit(1) \
+            .execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0].get("paused_until")
+        return None
+    except Exception as e:
+        logger.error("Failed to get source paused_until", source_id=source_id, error=str(e))
+        return None
+
+
+def pause_source(source_id: str, seconds: int, reason: str = None) -> None:
+    """Temporarily pause a source by setting paused_until."""
+    try:
+        now = datetime.now(timezone.utc)
+        paused_until = (now + timedelta(seconds=seconds)).isoformat()
+        update_data = {
+            "paused_until": paused_until,
+            "last_failure_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+        supabase.table("sources").update(update_data).eq("id", source_id).execute()
+        logger.warning("Paused source", source_id=source_id, paused_until=paused_until, reason=reason)
+    except Exception as e:
+        logger.error("Failed to pause source", source_id=source_id, seconds=seconds, error=str(e))
 
 
 def upsert_valuation(intake_id: str, valuation_data: dict):

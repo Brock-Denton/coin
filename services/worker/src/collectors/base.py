@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import structlog
 from src.config import settings
-from src.db import check_source_available, update_source_stats, get_source
+from src.db import check_source_available, update_source_stats, get_source, get_source_pause_until
 
 logger = structlog.get_logger()
 
@@ -247,7 +247,16 @@ class BaseCollector(ABC):
         """
         # Check circuit breaker
         if not self._check_circuit_breaker():
-            logger.warning("Circuit breaker open, skipping collection", source_id=self.source_id)
+            paused_until = None
+            try:
+                paused_until = get_source_pause_until(self.source_id)
+            except Exception:
+                pass
+            logger.warning(
+                "Source unavailable (paused or disabled), skipping collection",
+                source_id=self.source_id,
+                paused_until=paused_until
+            )
             return []
         
         # Check cache

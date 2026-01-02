@@ -10,7 +10,7 @@ from src.db import (
     claim_next_job, update_job_status, mark_job_retryable, log_job_event,
     insert_price_points, get_source, get_source_rules, get_attribution,
     upsert_valuation, update_job_heartbeat, reclaim_stuck_jobs, supabase,
-    upsert_worker_heartbeat
+    upsert_worker_heartbeat, check_source_available, pause_source, get_source_pause_until
 )
 from src.collectors.ebay import EbayCollector, EbayRateLimitError
 from src.valuation import ValuationEngine
@@ -206,23 +206,34 @@ def process_job(job: dict):
         try:
             price_points = collector.collect(query_params, exclude_keywords=all_exclude_keywords)
         except Exception as collect_error:
-            error_msg = str(collect_error)
-            # Check if this is an authentication/configuration error
-            if 'authentication failed' in error_msg.lower() or 'invalid application' in error_msg.lower():
-                logger.error("Collection failed due to authentication error", 
-                           job_id=job_id, 
-                           error=error_msg)
-                log_job_event(job_id, 'error', 'Authentication failed', {'error': error_msg})
-                update_job_status(job_id, 'failed', f"eBay API authentication failed. Please check your source configuration. Error: {error_msg}")
-                return
-            # Re-raise other errors to be handled by outer try/except
+            # If this looks like an eBay auth issue, disable the source so we stop hammering it.
+            msg = str(collect_error)
+            if source.get("adapter_type") == "ebay_api" and (
+                "Authentication failed" in msg or "Invalid Application" in msg or "AppID" in msg
+            ):
+                logger.error("eBay API authentication failed", error=msg)
+                try:
+                    supabase.table("sources").update({"enabled": False}).eq("id", source_id).execute()
+                except Exception:
+                    pass
+                raise Exception(
+                    "eBay API authentication failed: "
+                    f"{msg}. Please check your eBay App ID in the source configuration."
+                )
             raise
+
+        # If we got nothing AND the source is paused, this should not be "succeeded".
+        if not price_points:
+            if not check_source_available(source_id):
+                paused_until = get_source_pause_until(source_id)
+                reason = f"Source paused/unavailable (paused_until={paused_until})"
+                log_job_event(job_id, "warning", "Source unavailable, will retry later", {"paused_until": paused_until})
+                update_job_status(job_id, "retryable", reason)
+                return
         
         if not price_points:
             logger.warning("No price points collected", job_id=job_id)
             log_job_event(job_id, 'warning', 'No price points collected')
-            # Only mark as succeeded if we didn't get an error (might just be no results)
-            # But if we got here after an exception was caught, we should have already handled it
             update_job_status(job_id, 'succeeded', None)
             return
         
@@ -280,57 +291,28 @@ def process_job(job: dict):
                    duration_ms=duration_ms,
                    worker_id=settings.worker_id)
         
+    except EbayRateLimitError as e:
+        # Pause the source for a while, then retry the job later.
+        pause_source(source_id, seconds=3600, reason=str(e))  # 1 hour backoff
+        log_job_event(job_id, "warning", "Rate limited by eBay; pausing source and retrying", {"error": str(e)})
+        update_job_status(job_id, "retryable", str(e))
+        return
     except Exception as e:
         error_msg = str(e)
-        msg_l = error_msg.lower()
-        duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
-        logger.error("Job failed", 
-                    job_id=job_id, 
-                    intake_id=intake_id,
-                    source_id=source_id,
-                    error=error_msg, 
-                    duration_ms=duration_ms,
-                    worker_id=settings.worker_id,
-                    exc_info=True)
-        log_job_event(job_id, 'error', f'Job failed: {error_msg}')
-        
-        # Treat eBay throttling as retryable (errorId 10001 / RateLimiter)
-        is_rate_limited = (
-            isinstance(e, EbayRateLimitError)
-            or "rate limit" in msg_l
-            or "ratelimiter" in msg_l
-            or "errorid: 10001" in msg_l
-            or "exceeded the number of times" in msg_l
+        logger.error("Job failed", job_id=job_id, error=error_msg)
+
+        # Mark job as retryable for transient errors
+        retryable = (
+            "timeout" in error_msg.lower()
+            or "connection" in error_msg.lower()
+            or "temporary" in error_msg.lower()
+            or "rate limit" in error_msg.lower()
+            or "429" in error_msg
         )
 
-        if is_rate_limited:
-            # Pause the source a bit to avoid hammering eBay
-            try:
-                if source_id:
-                    # Update source to temporarily disable it
-                    supabase.table("sources").update({
-                        "enabled": False
-                    }).eq("id", source_id).execute()
-                    logger.warning("Source paused due to rate limiting", source_id=source_id, pause_minutes=15)
-            except Exception:
-                pass
-
-            # Backoff this job too (15 minutes = 15 * 60 seconds)
-            mark_job_retryable(job_id, base_delay_minutes=15)
-            logger.info("Job marked as retryable due to rate limiting", job_id=job_id)
-            return
-        
-        # Check if error is retryable (transient errors)
-        retryable_errors = ['timeout', 'connection', 'temporary', '503', '502', '504']
-        is_retryable = any(keyword in msg_l for keyword in retryable_errors)
-        
-        if is_retryable:
-            # Mark as retryable with exponential backoff
-            mark_job_retryable(job_id, base_delay_minutes=5)
-            logger.info("Job marked as retryable", job_id=job_id)
-        else:
-            # Mark as permanently failed
-            update_job_status(job_id, 'failed', error_msg)
+        status = "retryable" if retryable else "failed"
+        log_job_event(job_id, "error", f"Job {status}", {"error": error_msg})
+        update_job_status(job_id, status, error_msg)
     
     finally:
         # Always stop heartbeat thread, even on early returns or exceptions
