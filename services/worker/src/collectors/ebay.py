@@ -12,6 +12,21 @@ from src.config import settings
 
 logger = structlog.get_logger()
 
+class EbayRateLimitError(Exception):
+    """Raised when eBay throttles our calls (rate limit)."""
+    pass
+
+def _is_rate_limit_error(msg: str) -> bool:
+    if not msg:
+        return False
+    s = msg.lower()
+    return (
+        "ratelimiter" in s
+        or "errorid: 10001" in s
+        or "exceeded the number of times" in s
+        or ("service call" in s and "allowed" in s)
+    )
+
 
 class EbayCollector(BaseCollector):
     """Collector for eBay sold listings using official eBay Finding API."""
@@ -349,6 +364,9 @@ class EbayCollector(BaseCollector):
                 response = api.execute('findCompletedItems', request_params)
             except Exception as api_error:
                 error_str = str(api_error)
+                # Check for rate limit errors first
+                if _is_rate_limit_error(error_str):
+                    raise EbayRateLimitError(f"rate limit: {error_str}") from api_error
                 # Check if this is an authentication error
                 if 'Authentication failed' in error_str or 'Invalid Application' in error_str or 'errorId: 11002' in error_str:
                     auth_error = api_error
@@ -368,6 +386,9 @@ class EbayCollector(BaseCollector):
                     response = api.execute('findItemsAdvanced', request_params)
                 except Exception as fallback_error:
                     fallback_error_str = str(fallback_error)
+                    # Check for rate limit errors in fallback
+                    if _is_rate_limit_error(fallback_error_str):
+                        raise EbayRateLimitError(f"rate limit: {fallback_error_str}") from fallback_error
                     # Check if fallback also failed with auth error
                     if 'Authentication failed' in fallback_error_str or 'Invalid Application' in fallback_error_str or 'errorId: 11002' in fallback_error_str:
                         logger.error("eBay API authentication failed on fallback", error=fallback_error_str)
@@ -453,10 +474,19 @@ class EbayCollector(BaseCollector):
             logger.info("Collected price points", count=len(price_points))
             return price_points
             
+        except EbayRateLimitError:
+            # bubble up so worker can mark retryable + backoff
+            raise
         except EbayConnectionError as e:
-            logger.error("eBay API connection error", error=str(e), response=e.response.dict() if hasattr(e, 'response') else None)
-            return []
+            msg = str(e)
+            # If this is throttling, bubble up as retryable.
+            if _is_rate_limit_error(msg):
+                raise EbayRateLimitError(f"rate limit: {msg}") from e
+            # Otherwise, bubble up (don't silently succeed with 0 price points)
+            logger.error("eBay API connection error", error=msg, response=e.response.dict() if hasattr(e, 'response') else None)
+            raise
         except Exception as e:
+            # Bubble up so the job doesn't falsely look "succeeded"
             logger.error("Error collecting eBay listings", error=str(e), error_type=type(e).__name__)
-            return []
+            raise
 

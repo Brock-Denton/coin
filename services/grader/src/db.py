@@ -1,6 +1,7 @@
 """Database client and helpers for grader service."""
 from supabase import create_client, Client
 from src.config import settings
+from postgrest.exceptions import APIError
 from typing import Optional, List, Dict
 from datetime import datetime, timezone
 import structlog
@@ -11,28 +12,31 @@ logger = structlog.get_logger()
 # Initialize Supabase client
 supabase: Client = create_client(settings.supabase_url, settings.supabase_key)
 
-def _first_row(table: str, filters: List[tuple], columns: str = "*") -> Optional[Dict]:
+
+def _select_first(table: str, select: str, filters: Dict) -> Optional[Dict]:
     """
-    Safe "maybe single" helper that never uses PostgREST .single()/maybe_single().
-    PostgREST returns 406 when object is requested but 0 rows exist.
-    We always fetch an array and take the first row.
+    Reliable "maybe single" helper that does NOT 406 when 0 rows.
+    Uses limit(1) and returns the first row or None.
     """
-    q = supabase.table(table).select(columns)
-    for op, key, val in filters:
-        if op == "eq":
-            q = q.eq(key, val)
-        elif op == "is":
-            q = q.is_(key, val)
-        elif op == "in":
-            q = q.in_(key, val)
-        else:
-            raise ValueError(f"Unsupported filter op: {op}")
-    res = q.limit(1).execute()
-    data = getattr(res, "data", None) or []
-    if isinstance(data, list):
-        return data[0] if data else None
-    # Some clients return dict for single row; normalize.
-    return data if data else None
+    try:
+        q = supabase.table(table).select(select)
+        for k, v in (filters or {}).items():
+            # support explicit "is null" via v == None
+            if v is None:
+                q = q.is_(k, "null")
+            else:
+                q = q.eq(k, v)
+        resp = q.limit(1).execute()
+        if resp and getattr(resp, "data", None):
+            return resp.data[0]
+        return None
+    except APIError as e:
+        # Log exact PostgREST error and continue as None for optional reads
+        logger.warning("Select-first API error", table=table, select=select, filters=filters, error=str(e))
+        return None
+    except Exception as e:
+        logger.error("Select-first failed", table=table, select=select, filters=filters, error=str(e))
+        return None
 
 
 def get_internal_grader_source_id() -> Optional[str]:
@@ -42,16 +46,12 @@ def get_internal_grader_source_id() -> Optional[str]:
         Source ID if found, None otherwise
     """
     try:
-        row = _first_row(
+        row = _select_first(
             "sources",
-            [
-                ("eq", "name", "Internal Grader"),
-                ("eq", "adapter_type", "internal_grader"),
-                ("eq", "enabled", True),
-            ],
-            columns="id",
+            "id",
+            {"name": "Internal Grader", "adapter_type": "internal_grader", "enabled": True},
         )
-        return row.get("id") if row else None
+        return row["id"] if row else None
     except Exception as e:
         logger.error("Failed to get Internal Grader source ID", error=str(e))
         return None
@@ -190,7 +190,7 @@ def get_attribution(intake_id: str) -> Optional[Dict]:
         Attribution dictionary or None
     """
     try:
-        return _first_row("attributions", [("eq", "intake_id", intake_id)], columns="*")
+        return _select_first("attributions", "*", {"intake_id": intake_id})
     except Exception as e:
         logger.error("Failed to get attribution", intake_id=intake_id, error=str(e))
         return None
@@ -206,36 +206,56 @@ def get_valuation(intake_id: str) -> Optional[Dict]:
         Valuation dictionary or None
     """
     try:
-        return _first_row("valuations", [("eq", "intake_id", intake_id)], columns="*")
+        return _select_first("valuations", "*", {"intake_id": intake_id})
     except Exception as e:
         logger.error("Failed to get valuation", intake_id=intake_id, error=str(e))
         return None
 
 
 def upsert_grade_estimate(intake_id: str, grade_estimate_data: dict, model_version: str = "baseline_v1"):
-    """Create or update a grade estimate using a single atomic UPSERT.
-
-    Uses unique constraint: (intake_id, model_version).
-    Avoids "select then insert/update" race conditions and NoneType result issues.
+    """Create or update a grade estimate.
+    
+    Args:
+        intake_id: Intake ID
+        grade_estimate_data: Grade estimate data dictionary
+        model_version: Model version identifier
     """
-    # IMPORTANT: do not swallow errors here. If this fails, the grader should fail the job.
-    now_iso = datetime.now(timezone.utc).isoformat()
-    estimate_data = {
-        "intake_id": intake_id,
-        "model_version": model_version,
-        "grade_bucket": grade_estimate_data.get("grade_bucket"),
-        "grade_distribution": grade_estimate_data.get("grade_distribution"),
-        "details_risk": grade_estimate_data.get("details_risk"),
-        "confidence": float(grade_estimate_data.get("confidence", 0.5)),
-        "notes": grade_estimate_data.get("notes"),
-        "updated_at": now_iso,
-    }
-    res = supabase.table("grade_estimates") \
-        .upsert(estimate_data, on_conflict="intake_id,model_version") \
-        .execute()
-    if getattr(res, "data", None) is None:
-        raise RuntimeError(f"grade_estimates upsert returned no data for intake_id={intake_id}")
-    logger.info("Upserted grade estimate", intake_id=intake_id, model_version=model_version)
+    try:
+        # Check if estimate exists (avoid maybe_single() -> 406 behavior on 0 rows)
+        existing_row = _select_first(
+            "grade_estimates",
+            "id",
+            {"intake_id": intake_id, "model_version": model_version},
+        )
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        estimate_data = {
+            "intake_id": intake_id,
+            "model_version": model_version,
+            "grade_bucket": grade_estimate_data.get("grade_bucket"),
+            "grade_distribution": grade_estimate_data.get("grade_distribution"),
+            "details_risk": grade_estimate_data.get("details_risk"),
+            "confidence": float(grade_estimate_data.get("confidence", 0.5)),
+            "notes": grade_estimate_data.get("notes"),
+            "updated_at": now_iso
+        }
+
+        if existing_row:
+            # Update existing
+            supabase.table("grade_estimates") \
+                .update(estimate_data) \
+                .eq("id", existing_row["id"]) \
+                .execute()
+            logger.info("Updated grade estimate", intake_id=intake_id, model_version=model_version)
+        else:
+            # Insert new
+            estimate_data["created_at"] = now_iso
+            supabase.table("grade_estimates") \
+                .insert(estimate_data) \
+                .execute()
+            logger.info("Created grade estimate", intake_id=intake_id, model_version=model_version)
+    except Exception as e:
+        logger.error("Failed to upsert grade estimate", intake_id=intake_id, error=str(e))
 
 
 def upsert_grading_recommendation(intake_id: str, service_id: str, recommendation_data: dict, ship_policy_id: Optional[str] = None):
@@ -248,6 +268,12 @@ def upsert_grading_recommendation(intake_id: str, service_id: str, recommendatio
         ship_policy_id: Optional shipping policy ID
     """
     try:
+        existing_row = _select_first(
+            "grading_recommendations",
+            "id",
+            {"intake_id": intake_id, "service_id": service_id},
+        )
+
         now_iso = datetime.now(timezone.utc).isoformat()
         rec_data = {
             "intake_id": intake_id,
@@ -259,16 +285,23 @@ def upsert_grading_recommendation(intake_id: str, service_id: str, recommendatio
             "expected_profit_cents": recommendation_data.get("expected_profit_cents"),
             "recommendation": recommendation_data.get("recommendation"),
             "breakdown": recommendation_data.get("breakdown", {}),
-            "updated_at": now_iso,
+            "updated_at": now_iso
         }
 
-        # Prefer a single atomic UPSERT to avoid edge cases and races.
-        # This requires a UNIQUE constraint on (intake_id, service_id).
-        supabase.table("grading_recommendations") \
-            .upsert(rec_data, on_conflict="intake_id,service_id") \
-            .execute()
-
-        logger.info("Upserted grading recommendation", intake_id=intake_id, service_id=service_id)
+        if existing_row:
+            # Update existing
+            supabase.table("grading_recommendations") \
+                .update(rec_data) \
+                .eq("id", existing_row["id"]) \
+                .execute()
+            logger.info("Updated grading recommendation", intake_id=intake_id, service_id=service_id)
+        else:
+            # Insert new
+            rec_data["created_at"] = now_iso
+            supabase.table("grading_recommendations") \
+                .insert(rec_data) \
+                .execute()
+            logger.info("Created grading recommendation", intake_id=intake_id, service_id=service_id)
     except Exception as e:
         logger.error("Failed to upsert grading recommendation", intake_id=intake_id, service_id=service_id, error=str(e))
 

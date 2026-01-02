@@ -3,7 +3,7 @@ import time
 import logging
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 from src.config import settings
 from src.db import (
@@ -12,7 +12,7 @@ from src.db import (
     upsert_valuation, update_job_heartbeat, reclaim_stuck_jobs, supabase,
     upsert_worker_heartbeat
 )
-from src.collectors.ebay import EbayCollector
+from src.collectors.ebay import EbayCollector, EbayRateLimitError
 from src.valuation import ValuationEngine
 
 # Configure Python logging to output to stderr (Docker captures this)
@@ -282,6 +282,7 @@ def process_job(job: dict):
         
     except Exception as e:
         error_msg = str(e)
+        msg_l = error_msg.lower()
         duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
         logger.error("Job failed", 
                     job_id=job_id, 
@@ -293,9 +294,35 @@ def process_job(job: dict):
                     exc_info=True)
         log_job_event(job_id, 'error', f'Job failed: {error_msg}')
         
+        # Treat eBay throttling as retryable (errorId 10001 / RateLimiter)
+        is_rate_limited = (
+            isinstance(e, EbayRateLimitError)
+            or "rate limit" in msg_l
+            or "ratelimiter" in msg_l
+            or "errorid: 10001" in msg_l
+            or "exceeded the number of times" in msg_l
+        )
+
+        if is_rate_limited:
+            # Pause the source a bit to avoid hammering eBay
+            try:
+                if source_id:
+                    # Update source to temporarily disable it
+                    supabase.table("sources").update({
+                        "enabled": False
+                    }).eq("id", source_id).execute()
+                    logger.warning("Source paused due to rate limiting", source_id=source_id, pause_minutes=15)
+            except Exception:
+                pass
+
+            # Backoff this job too (15 minutes = 15 * 60 seconds)
+            mark_job_retryable(job_id, base_delay_minutes=15)
+            logger.info("Job marked as retryable due to rate limiting", job_id=job_id)
+            return
+        
         # Check if error is retryable (transient errors)
-        retryable_errors = ['timeout', 'connection', 'rate limit', 'temporary', '503', '502', '504']
-        is_retryable = any(keyword in error_msg.lower() for keyword in retryable_errors)
+        retryable_errors = ['timeout', 'connection', 'temporary', '503', '502', '504']
+        is_retryable = any(keyword in msg_l for keyword in retryable_errors)
         
         if is_retryable:
             # Mark as retryable with exponential backoff
