@@ -18,12 +18,16 @@ class Settings(BaseSettings):
     job_lock_timeout_seconds: int = 300
     
     # eBay API (optional, can be in source config)
+    # Prefer OAuth-style naming
+    ebay_client_id: Optional[str] = None
+    ebay_client_secret: Optional[str] = None
+    # Legacy fallback names
     ebay_app_id: Optional[str] = None
     ebay_cert_id: Optional[str] = None
     ebay_dev_id: Optional[str] = None
     ebay_sandbox: bool = False
     ebay_marketplace_id: str = "EBAY_US"
-    ebay_oauth_scope: str = "https://api.ebay.com/oauth/api_scope"
+    ebay_oauth_scope: str = "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
     
     # Cache
     cache_enabled: bool = True

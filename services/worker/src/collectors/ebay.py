@@ -39,27 +39,17 @@ class EbayCollector(BaseCollector):
         """
         super().__init__(source_id=source_id, rate_limit_per_minute=rate_limit_per_minute)
         
-        # Prefer OAuth-style env names, fallback to legacy names
-        self.client_id = app_id or os.getenv("EBAY_CLIENT_ID") or os.getenv("EBAY_APP_ID")
-        self.client_secret = cert_id or os.getenv("EBAY_CLIENT_SECRET") or os.getenv("EBAY_CERT_ID")
-        
-        if not self.client_id or not self.client_secret:
-            raise ValueError(
-                "Missing eBay OAuth credentials. Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET "
-                "(or fallback EBAY_APP_ID and EBAY_CERT_ID)."
-            )
-        
         self.dev_id = dev_id  # Not used but kept for compatibility
-        self.sandbox = sandbox
+        self.sandbox = sandbox or settings.ebay_sandbox
         self.max_results = 200  # Browse API limit
         
         # Set base URLs based on sandbox
-        if sandbox:
-            self.base_url = "https://api.sandbox.ebay.com"
+        if self.sandbox:
             self.token_url = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
+            self.browse_base = "https://api.sandbox.ebay.com"
         else:
-            self.base_url = "https://api.ebay.com"
             self.token_url = "https://api.ebay.com/identity/v1/oauth2/token"
+            self.browse_base = "https://api.ebay.com"
         
         # In-memory token cache
         self._token: Optional[str] = None
@@ -71,22 +61,32 @@ class EbayCollector(BaseCollector):
         if self._token and now < self._token_expiry - 30:
             return self._token
         
-        basic = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode("utf-8")).decode("utf-8")
+        # Determine client_id/client_secret from settings with fallback
+        client_id = settings.ebay_client_id or settings.ebay_app_id
+        client_secret = settings.ebay_client_secret or settings.ebay_cert_id
+        
+        if not client_id or not client_secret:
+            raise ValueError(
+                "Missing eBay OAuth credentials. Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET "
+                "(or fallback EBAY_APP_ID and EBAY_CERT_ID)."
+            )
+        
+        basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("utf-8")
         headers = {
             "Authorization": f"Basic {basic}",
             "Content-Type": "application/x-www-form-urlencoded",
         }
         data = {
             "grant_type": "client_credentials",
-            # Per eBay Browse docs, api_scope is sufficient for many Browse endpoints.
-            "scope": settings.ebay_oauth_scope,
+            "scope": settings.ebay_oauth_scope,  # Space-delimited scopes
         }
         
         try:
             r = requests.post(self.token_url, headers=headers, data=data, timeout=20)
             
             if r.status_code != 200:
-                # This is the *real* reason your auth is failing (invalid_client, invalid_scope, etc.)
+                # Include status code and response text in error
+                error_msg = f"eBay OAuth token request failed ({r.status_code}): {r.text[:300]}"
                 logger.error(
                     "eBay OAuth token request failed",
                     status=r.status_code,
@@ -94,7 +94,7 @@ class EbayCollector(BaseCollector):
                     token_url=self.token_url,
                     sandbox=self.sandbox,
                 )
-                raise Exception(f"eBay OAuth token request failed ({r.status_code}): {r.text[:300]}")
+                raise Exception(error_msg)
             
             payload = r.json()
             token = payload.get("access_token")
@@ -113,17 +113,52 @@ class EbayCollector(BaseCollector):
                 raise
             raise Exception(f"Failed to get OAuth token: {str(e)}") from e
     
-    def _search_browse(self, query: str) -> List[Dict]:
-        """Browse API search (active listings)."""
+    def _search_marketplace_insights(self, query: str) -> Optional[List[Dict]]:
+        """Marketplace Insights API search (sold listings). Returns None if not authorized."""
         token = self._get_app_token()
         
-        url = f"{self.base_url}/buy/browse/v1/item_summary/search"
+        url = f"{self.browse_base}/buy/marketplace_insights/v1_beta/item_sales/search"
         params = {"q": query, "limit": str(self.max_results)}
         full_url = url + "?" + urllib.parse.urlencode(params)
         
         headers = {
             "Authorization": f"Bearer {token}",
-            "X-EBAY-C-MARKETPLACE-ID": settings.ebay_marketplace_id,
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        }
+        
+        resp = requests.get(full_url, headers=headers, timeout=20)
+        
+        # 403/404 means not authorized for marketplace insights - fall back to Browse
+        if resp.status_code in (403, 404):
+            logger.info("Not authorized for marketplace insights, will fall back to Browse API")
+            return None
+        
+        # 401 means auth issue - raise
+        if resp.status_code == 401:
+            raise Exception(f"Marketplace Insights auth failed ({resp.status_code}): {resp.text[:300]}")
+        
+        # 429 is rate limit - raise as rate limit error
+        if resp.status_code == 429:
+            raise EbayRateLimitError(f"rate limit: {resp.status_code} {resp.text[:300]}")
+        
+        if resp.status_code >= 400:
+            logger.error("Marketplace Insights search failed", status=resp.status_code, body=resp.text[:1500])
+            return None
+        
+        data = resp.json()
+        return data.get("itemSales", []) or []
+    
+    def _search_browse(self, query: str) -> List[Dict]:
+        """Browse API search (active listings)."""
+        token = self._get_app_token()
+        
+        url = f"{self.browse_base}/buy/browse/v1/item_summary/search"
+        params = {"q": query, "limit": str(self.max_results)}
+        full_url = url + "?" + urllib.parse.urlencode(params)
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
         }
         
         resp = requests.get(full_url, headers=headers, timeout=20)
@@ -137,8 +172,13 @@ class EbayCollector(BaseCollector):
             headers["Authorization"] = f"Bearer {token}"
             resp = requests.get(full_url, headers=headers, timeout=20)
         
-        if resp.status_code == 429 or "RateLimiter" in resp.text:
+        # 429 is rate limit - raise as rate limit error (not auth failed)
+        if resp.status_code == 429:
             raise EbayRateLimitError(f"rate limit: {resp.status_code} {resp.text[:300]}")
+        
+        # 401/403 are auth errors - raise with details
+        if resp.status_code in (401, 403):
+            raise Exception(f"Browse API auth failed ({resp.status_code}): {resp.text[:300]}")
         
         if resp.status_code >= 400:
             logger.error("eBay Browse search failed", status=resp.status_code, body=resp.text[:1500])
@@ -254,7 +294,10 @@ class EbayCollector(BaseCollector):
         Returns:
             List of price point dictionaries
         """
-        if not self.client_id or not self.client_secret:
+        # Check credentials
+        client_id = settings.ebay_client_id or settings.ebay_app_id
+        client_secret = settings.ebay_client_secret or settings.ebay_cert_id
+        if not client_id or not client_secret:
             logger.error("eBay OAuth credentials not configured")
             return []
         
@@ -262,8 +305,23 @@ class EbayCollector(BaseCollector):
         logger.info("Collecting eBay listings", query=query)
         
         try:
-            # Search using Browse API
-            items = self._search_browse(query)
+            # Try Marketplace Insights first (for sold comps), fall back to Browse if not authorized
+            items = None
+            try:
+                items = self._search_marketplace_insights(query)
+                if items is not None:
+                    logger.info("Using Marketplace Insights API for sold listings", count=len(items))
+            except EbayRateLimitError:
+                # Re-raise rate limits
+                raise
+            except Exception as e:
+                # Log but don't fail - will fall back to Browse
+                logger.warning("Marketplace Insights failed, falling back to Browse API", error=str(e))
+            
+            # Fall back to Browse API if Marketplace Insights not available
+            if items is None:
+                items = self._search_browse(query)
+                logger.info("Using Browse API for active listings", count=len(items))
             
             # Filter junk listings
             if exclude_keywords:
@@ -274,10 +332,29 @@ class EbayCollector(BaseCollector):
             price_points = []
             now_iso = datetime.now(timezone.utc).isoformat()
             
+            # Determine if these are sold items (from Marketplace Insights) or active listings (from Browse)
+            is_sold = items and len(items) > 0 and 'soldPrice' in items[0]
+            
             for item in items:
                 try:
-                    # Extract price
-                    price_obj = item.get('price', {})
+                    # Extract price - Marketplace Insights uses 'soldPrice', Browse uses 'price'
+                    if is_sold:
+                        price_obj = item.get('soldPrice', {})
+                        price_type = 'sold'
+                        # Marketplace Insights may have different field names
+                        item_id = item.get('itemId', '')
+                        title = item.get('title', '')
+                        item_web_url = item.get('itemWebUrl', '')
+                        # Sold date from Marketplace Insights
+                        sold_date = item.get('soldDate') or now_iso
+                    else:
+                        price_obj = item.get('price', {})
+                        price_type = 'ask'
+                        item_id = item.get('itemId', '')
+                        title = item.get('title', '')
+                        item_web_url = item.get('itemWebUrl', '')
+                        sold_date = now_iso
+                    
                     price_value = price_obj.get('value')
                     currency = price_obj.get('currency', 'USD')
                     
@@ -286,11 +363,6 @@ class EbayCollector(BaseCollector):
                     
                     # Convert to cents
                     price_cents = int(round(float(price_value) * 100))
-                    
-                    # Extract other fields
-                    title = item.get('title', '')
-                    item_id = item.get('itemId', '')
-                    item_web_url = item.get('itemWebUrl', '')
                     
                     # Generate dedupe key using external_id
                     dedupe_key = f"ext_{item_id}" if item_id else None
@@ -302,13 +374,13 @@ class EbayCollector(BaseCollector):
                         "job_id": query_params.get('job_id'),
                         "dedupe_key": dedupe_key,
                         "price_cents": price_cents,
-                        "price_type": "ask",
+                        "price_type": price_type,
                         "raw_payload": item,  # Store full eBay response
                         "listing_url": item_web_url,
                         "listing_title": title,
-                        "listing_date": now_iso,
-                        "observed_at": now_iso,
-                        "match_strength": 1.0,  # Default match strength for Browse API results
+                        "listing_date": sold_date if is_sold else now_iso,
+                        "observed_at": sold_date if is_sold else now_iso,
+                        "match_strength": 1.0,
                         "external_id": item_id,
                         "filtered_out": False
                     }
