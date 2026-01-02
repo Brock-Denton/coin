@@ -1,6 +1,8 @@
 """eBay API collector using Buy Browse API."""
+import os
 import base64
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 import requests
@@ -16,142 +18,134 @@ class EbayRateLimitError(Exception):
 
 
 class EbayCollector(BaseCollector):
-    """Collector for eBay listings using Buy Browse API with OAuth."""
+    """
+    Collector for eBay listings using Buy Browse API with OAuth.
     
-    def __init__(self, app_id: str, cert_id: str = None, dev_id: str = None, sandbox: bool = False, source_id: str = None, rate_limit_per_minute: int = 60):
+    IMPORTANT:
+      - Prefer EBAY_CLIENT_ID / EBAY_CLIENT_SECRET (OAuth)
+      - Fallback to EBAY_APP_ID / EBAY_CERT_ID for backward compat
+    """
+    
+    def __init__(self, app_id: str = None, cert_id: str = None, dev_id: str = None, sandbox: bool = False, source_id: str = None, rate_limit_per_minute: int = 60):
         """Initialize eBay collector.
         
         Args:
-            app_id: eBay App ID (required)
-            cert_id: eBay Cert ID (required for OAuth)
+            app_id: eBay App ID (optional, falls back to env vars)
+            cert_id: eBay Cert ID (optional, falls back to env vars)
             dev_id: eBay Dev ID (optional, not used in Browse API)
-            sandbox: Use sandbox environment (not currently supported)
+            sandbox: Use sandbox environment
             source_id: Source ID for tracking and circuit breaker
             rate_limit_per_minute: Rate limit (default 60)
         """
         super().__init__(source_id=source_id, rate_limit_per_minute=rate_limit_per_minute)
-        self.app_id = app_id
-        self.cert_id = cert_id
+        
+        # Prefer OAuth-style env names, fallback to legacy names
+        self.client_id = app_id or os.getenv("EBAY_CLIENT_ID") or os.getenv("EBAY_APP_ID")
+        self.client_secret = cert_id or os.getenv("EBAY_CLIENT_SECRET") or os.getenv("EBAY_CERT_ID")
+        
+        if not self.client_id or not self.client_secret:
+            raise ValueError(
+                "Missing eBay OAuth credentials. Set EBAY_CLIENT_ID and EBAY_CLIENT_SECRET "
+                "(or fallback EBAY_APP_ID and EBAY_CERT_ID)."
+            )
+        
         self.dev_id = dev_id  # Not used but kept for compatibility
         self.sandbox = sandbox
         self.max_results = 200  # Browse API limit
         
+        # Set base URLs based on sandbox
+        if sandbox:
+            self.base_url = "https://api.sandbox.ebay.com"
+            self.token_url = "https://api.sandbox.ebay.com/identity/v1/oauth2/token"
+        else:
+            self.base_url = "https://api.ebay.com"
+            self.token_url = "https://api.ebay.com/identity/v1/oauth2/token"
+        
         # In-memory token cache
-        self._token_cache = {
-            'access_token': None,
-            'expires_at': 0
-        }
+        self._token: Optional[str] = None
+        self._token_expiry: float = 0.0
         
     def _get_app_token(self) -> str:
-        """Get OAuth access token using client credentials grant.
+        """Get app OAuth token (client_credentials). Raises with details on failure."""
+        now = time.time()
+        if self._token and now < self._token_expiry - 30:
+            return self._token
         
-        Returns:
-            Access token string
-            
-        Raises:
-            Exception: If authentication fails
-        """
-        # Check cached token
-        if self._token_cache['access_token'] and time.time() < self._token_cache['expires_at']:
-            return self._token_cache['access_token']
-        
-        if not self.app_id or not self.cert_id:
-            raise Exception("eBay App ID and Cert ID are required for OAuth")
-        
-        # Prepare Basic Auth header
-        credentials = f"{self.app_id}:{self.cert_id}"
-        encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
-        
-        # Request token
-        url = "https://api.ebay.com/identity/v1/oauth2/token"
+        basic = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode("utf-8")).decode("utf-8")
         headers = {
+            "Authorization": f"Basic {basic}",
             "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": f"Basic {encoded_credentials}"
         }
         data = {
             "grant_type": "client_credentials",
-            "scope": settings.ebay_oauth_scope
+            # Per eBay Browse docs, api_scope is sufficient for many Browse endpoints.
+            "scope": settings.ebay_oauth_scope,
         }
         
         try:
-            response = requests.post(url, headers=headers, data=data, timeout=10)
-            response.raise_for_status()
+            r = requests.post(self.token_url, headers=headers, data=data, timeout=20)
             
-            token_data = response.json()
-            access_token = token_data.get('access_token')
-            expires_in = token_data.get('expires_in', 7200)  # Default 2 hours
+            if r.status_code != 200:
+                # This is the *real* reason your auth is failing (invalid_client, invalid_scope, etc.)
+                logger.error(
+                    "eBay OAuth token request failed",
+                    status=r.status_code,
+                    body=r.text[:1500],
+                    token_url=self.token_url,
+                    sandbox=self.sandbox,
+                )
+                raise Exception(f"eBay OAuth token request failed ({r.status_code}): {r.text[:300]}")
             
-            if not access_token:
-                raise Exception("No access_token in OAuth response")
+            payload = r.json()
+            token = payload.get("access_token")
+            expires_in = int(payload.get("expires_in", 3600))
             
-            # Cache token with 60s buffer before expiry
-            self._token_cache['access_token'] = access_token
-            self._token_cache['expires_at'] = time.time() + expires_in - 60
+            if not token:
+                logger.error("eBay OAuth token response missing access_token", payload=payload)
+                raise Exception("eBay OAuth token response missing access_token")
             
-            logger.debug("Obtained eBay OAuth token", expires_in=expires_in)
-            return access_token
+            self._token = token
+            self._token_expiry = time.time() + expires_in
+            return token
             
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code in (401, 403):
-                raise Exception(
-                    "Browse API auth failed — check EBAY_APP_ID/EBAY_CERT_ID and OAuth scope"
-                ) from e
-            raise Exception(f"Failed to get OAuth token: {str(e)}") from e
         except Exception as e:
+            if isinstance(e, Exception) and "OAuth token" in str(e):
+                raise
             raise Exception(f"Failed to get OAuth token: {str(e)}") from e
     
     def _search_browse(self, query: str) -> List[Dict]:
-        """Search eBay using Buy Browse API.
-        
-        Args:
-            query: Search query string
-            
-        Returns:
-            List of item summary dictionaries
-            
-        Raises:
-            Exception: If API call fails
-        """
+        """Browse API search (active listings)."""
         token = self._get_app_token()
         
-        url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+        url = f"{self.base_url}/buy/browse/v1/item_summary/search"
+        params = {"q": query, "limit": str(self.max_results)}
+        full_url = url + "?" + urllib.parse.urlencode(params)
+        
         headers = {
             "Authorization": f"Bearer {token}",
-            "X-EBAY-C-MARKETPLACE-ID": settings.ebay_marketplace_id
-        }
-        params = {
-            "q": query,
-            "limit": self.max_results
+            "X-EBAY-C-MARKETPLACE-ID": settings.ebay_marketplace_id,
         }
         
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=30)
-            
-            # Handle auth errors
-            if response.status_code in (401, 403):
-                raise Exception(
-                    "Browse API auth failed — check EBAY_APP_ID/EBAY_CERT_ID and OAuth scope"
-                )
-            
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract item summaries
-            items = data.get('itemSummaries', [])
-            if not isinstance(items, list):
-                items = []
-            
-            logger.info("Received eBay listings from Browse API", count=len(items), query=query)
-            return items
-            
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code in (401, 403):
-                raise Exception(
-                    "Browse API auth failed — check EBAY_APP_ID/EBAY_CERT_ID and OAuth scope"
-                ) from e
-            raise Exception(f"Browse API request failed: {str(e)}") from e
-        except Exception as e:
-            raise Exception(f"Browse API request failed: {str(e)}") from e
+        resp = requests.get(full_url, headers=headers, timeout=20)
+        
+        # If token expired/invalid, clear cache and retry once
+        if resp.status_code == 401:
+            logger.warning("eBay Browse returned 401; refreshing token and retrying once")
+            self._token = None
+            self._token_expiry = 0.0
+            token = self._get_app_token()
+            headers["Authorization"] = f"Bearer {token}"
+            resp = requests.get(full_url, headers=headers, timeout=20)
+        
+        if resp.status_code == 429 or "RateLimiter" in resp.text:
+            raise EbayRateLimitError(f"rate limit: {resp.status_code} {resp.text[:300]}")
+        
+        if resp.status_code >= 400:
+            logger.error("eBay Browse search failed", status=resp.status_code, body=resp.text[:1500])
+            return []
+        
+        data = resp.json()
+        return data.get("itemSummaries", []) or []
     
     def _build_query(self, query_params: dict) -> str:
         """Build eBay search query from attribution fields.
@@ -260,8 +254,8 @@ class EbayCollector(BaseCollector):
         Returns:
             List of price point dictionaries
         """
-        if not self.app_id or not self.cert_id:
-            logger.error("eBay App ID or Cert ID not configured")
+        if not self.client_id or not self.client_secret:
+            logger.error("eBay OAuth credentials not configured")
             return []
         
         query = self._build_query(query_params)
